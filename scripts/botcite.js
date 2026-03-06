@@ -48,6 +48,7 @@ BBPromise.onPossiblyUnhandledRejection( () => {
 
 function usage() {
 	console.error( 'usage:' );
+	console.error( '  botcite mcp' );
 	console.error( '  botcite setup' );
 	console.error( '  botcite api [--headers] <path>' );
 	console.error( '  botcite cite [--headers] <format> <query>' );
@@ -1868,7 +1869,215 @@ function handleCommandError( error, options, command, stage ) {
 	process.exit( 1 );
 }
 
+function writeMcpMessage( payload ) {
+	const body = Buffer.from( JSON.stringify( payload ), 'utf8' );
+	const header = Buffer.from( `Content-Length: ${ body.length }\r\n\r\n`, 'utf8' );
+	process.stdout.write( Buffer.concat( [ header, body ] ) );
+}
+
+function makeMcpTools() {
+	return [
+		{
+			name: 'cite',
+			description: 'Generate citation in target format from DOI/URL/title',
+			inputSchema: {
+				type: 'object',
+				properties: {
+					format: { type: 'string' },
+					query: { type: 'string' }
+				},
+				required: [ 'format', 'query' ]
+			}
+		},
+		{
+			name: 'cite_pdf',
+			description: 'Generate bibtex citation from a local PDF path',
+			inputSchema: {
+				type: 'object',
+				properties: {
+					pdf_path: { type: 'string' }
+				},
+				required: [ 'pdf_path' ]
+			}
+		},
+		{
+			name: 'fetch_pdf',
+			description: 'Resolve and download PDF from DOI/arXiv/URL',
+			inputSchema: {
+				type: 'object',
+				properties: {
+					identifier: { type: 'string' },
+					out: { type: 'string' },
+					base: { type: 'string' }
+				},
+				required: [ 'identifier' ]
+			}
+		},
+		{
+			name: 'openurl_resolve',
+			description: 'Run OpenURL resolver diagnostics for an identifier',
+			inputSchema: {
+				type: 'object',
+				properties: {
+					identifier: { type: 'string' },
+					base: { type: 'string' }
+				},
+				required: [ 'identifier' ]
+			}
+		}
+	];
+}
+
+async function callMcpTool( name, args ) {
+	const options = { json: false, silent: true, headers: false };
+	if ( name === 'cite' ) {
+		const format = String( args && args.format || '' ).trim();
+		const query = String( args && args.query || '' ).trim();
+		if ( !format || !query ) {
+			throw new Error( 'cite requires format and query' );
+		}
+		const response = await runCitation( format, query, options );
+		return response.body || '';
+	}
+	if ( name === 'cite_pdf' ) {
+		const pdfPath = String( args && args.pdf_path || '' ).trim();
+		if ( !pdfPath ) {
+			throw new Error( 'cite_pdf requires pdf_path' );
+		}
+		const response = await runCitationFromPdf( pdfPath, options );
+		return response.body || '';
+	}
+	if ( name === 'fetch_pdf' ) {
+		const identifier = String( args && args.identifier || '' ).trim();
+		if ( !identifier ) {
+			throw new Error( 'fetch_pdf requires identifier' );
+		}
+		const outPath = await runFetchPdf( identifier, {
+			...options,
+			out: args && args.out ? String( args.out ) : '',
+			base: args && args.base ? String( args.base ) : ''
+		} );
+		return outPath;
+	}
+	if ( name === 'openurl_resolve' ) {
+		const identifier = String( args && args.identifier || '' ).trim();
+		if ( !identifier ) {
+			throw new Error( 'openurl_resolve requires identifier' );
+		}
+		const output = await runOpenUrlResolve( identifier, {
+			...options,
+			base: args && args.base ? String( args.base ) : ''
+		} );
+		return JSON.stringify( output, null, 2 );
+	}
+	throw new Error( `unknown tool: ${ name }` );
+}
+
+function serveMcp() {
+	const tools = makeMcpTools();
+	let buffer = Buffer.alloc( 0 );
+
+	const handleMessage = async ( msg ) => {
+		if ( !msg || typeof msg !== 'object' || !msg.method ) {
+			return;
+		}
+
+		if ( msg.method === 'notifications/initialized' ) {
+			return;
+		}
+
+		const id = msg.id;
+		if ( msg.method === 'initialize' ) {
+			writeMcpMessage( {
+				jsonrpc: '2.0',
+				id,
+				result: {
+					protocolVersion: '2024-11-05',
+					serverInfo: { name: 'botcite', version: '2.0.0' },
+					capabilities: { tools: {} }
+				}
+			} );
+			return;
+		}
+		if ( msg.method === 'ping' ) {
+			writeMcpMessage( { jsonrpc: '2.0', id, result: {} } );
+			return;
+		}
+		if ( msg.method === 'tools/list' ) {
+			writeMcpMessage( { jsonrpc: '2.0', id, result: { tools } } );
+			return;
+		}
+		if ( msg.method === 'tools/call' ) {
+			try {
+				const toolName = msg.params && msg.params.name;
+				const toolArgs = msg.params && msg.params.arguments || {};
+				const text = await callMcpTool( toolName, toolArgs );
+				writeMcpMessage( {
+					jsonrpc: '2.0',
+					id,
+					result: {
+						content: [ { type: 'text', text } ],
+						isError: false
+					}
+				} );
+			} catch ( error ) {
+				writeMcpMessage( {
+					jsonrpc: '2.0',
+					id,
+					result: {
+						content: [ { type: 'text', text: error.message } ],
+						isError: true
+					}
+				} );
+			}
+			return;
+		}
+
+		if ( id !== undefined ) {
+			writeMcpMessage( {
+				jsonrpc: '2.0',
+				id,
+				error: { code: -32601, message: `Method not found: ${ msg.method }` }
+			} );
+		}
+	};
+
+	process.stdin.on( 'data', ( chunk ) => {
+		buffer = Buffer.concat( [ buffer, chunk ] );
+		while ( true ) {
+			const headerEnd = buffer.indexOf( '\r\n\r\n' );
+			if ( headerEnd < 0 ) {
+				return;
+			}
+			const headerText = buffer.slice( 0, headerEnd ).toString( 'utf8' );
+			const lengthMatch = headerText.match( /Content-Length:\s*(\d+)/i );
+			if ( !lengthMatch ) {
+				buffer = buffer.slice( headerEnd + 4 );
+				continue;
+			}
+			const contentLength = parseInt( lengthMatch[ 1 ], 10 );
+			const frameTotal = headerEnd + 4 + contentLength;
+			if ( buffer.length < frameTotal ) {
+				return;
+			}
+			const body = buffer.slice( headerEnd + 4, frameTotal ).toString( 'utf8' );
+			buffer = buffer.slice( frameTotal );
+			try {
+				const msg = JSON.parse( body );
+				Promise.resolve( handleMessage( msg ) ).catch( () => {} );
+			} catch ( error ) {
+			}
+		}
+	} );
+	process.stdin.resume();
+}
+
 const action = process.argv[ 2 ];
+
+if ( action === 'mcp' ) {
+	serveMcp();
+	return;
+}
 
 if ( action === 'setup' ) {
 	try {
