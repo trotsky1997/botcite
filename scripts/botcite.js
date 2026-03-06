@@ -33,11 +33,13 @@ const defaultPdfFetchIntervalMs = parseInt( process.env.CITOID_LOCAL_FETCH_INTER
 const defaultRequestTimeoutMs = parseInt( process.env.CITOID_LOCAL_FETCH_TIMEOUT_MS || '15000', 10 );
 const defaultProbeBodyBytes = parseInt( process.env.CITOID_LOCAL_PROBE_BODY_BYTES || '1572864', 10 );
 const defaultFetchConcurrency = parseInt( process.env.CITOID_LOCAL_FETCH_CONCURRENCY || '4', 10 );
+const defaultBatchConcurrency = parseInt( process.env.CITOID_LOCAL_BATCH_CONCURRENCY || '4', 10 );
 const defaultOpenUrlBase = process.env.OPENURL_BASE || '';
 const cacheRootDir = process.env.LOCAL_CACHE_DIR || path.join( localDir, 'cache' );
 const cacheMetaPath = path.join( cacheRootDir, 'cache-meta.json' );
 const pdfCacheDir = path.join( cacheRootDir, 'pdfs' );
 const defaultCacheTtlSec = parseInt( process.env.CITOID_LOCAL_CACHE_TTL_SEC || '86400', 10 );
+let cacheMetaMemo = null;
 
 BBPromise.onPossiblyUnhandledRejection( () => {
 } );
@@ -65,6 +67,9 @@ function usage() {
 	console.error( '  botcite fetch-pdf 1706.03762 --out ./attention.pdf' );
 	console.error( "  botcite openurl-resolve --base 'https://example.edu/openurl' 10.1038/s41586-020-2649-2" );
 	console.error( '  botcite batch --op cite --format bibtex --in ./ids.txt --out-jsonl ./result.jsonl' );
+	console.error( 'options:' );
+	console.error( '  --concurrency <n>  batch worker count (default: 4)' );
+	console.error( '  --profile          print timing diagnostics to stderr' );
 	console.error( '  botcite styles sync' );
 	console.error( "  botcite cite-style --locale zh-CN '10.1145/3368089.3409741'" );
 	console.error( "  botcite cite-style --plain --locale zh-CN '10.1145/3368089.3409741'" );
@@ -126,20 +131,34 @@ function makeCacheKey( namespace, payload ) {
 }
 
 function loadCacheMeta() {
+	if ( cacheMetaMemo ) {
+		return cacheMetaMemo;
+	}
 	if ( !fileExists( cacheMetaPath ) ) {
-		return {};
+		cacheMetaMemo = {};
+		return cacheMetaMemo;
 	}
 	try {
 		const text = fs.readFileSync( cacheMetaPath, 'utf8' );
 		const parsed = JSON.parse( text );
-		return parsed && typeof parsed === 'object' ? parsed : {};
+		cacheMetaMemo = parsed && typeof parsed === 'object' ? parsed : {};
+		return cacheMetaMemo;
 	} catch ( error ) {
-		return {};
+		cacheMetaMemo = {};
+		return cacheMetaMemo;
 	}
 }
 
 function saveCacheMeta( meta ) {
+	cacheMetaMemo = meta;
 	fs.writeFileSync( cacheMetaPath, `${ JSON.stringify( meta ) }\n` );
+}
+
+function profileLog( options, stage, startedAt, extra = '' ) {
+	if ( options && options.profile ) {
+		const suffix = extra ? ` ${ extra }` : '';
+		console.error( `[profile] ${ stage } ${ Date.now() - startedAt }ms${ suffix }` );
+	}
 }
 
 function getCachedValue( cacheKey ) {
@@ -492,7 +511,9 @@ function parseOptions( args ) {
 		outJsonl: '',
 		json: false,
 		format: '',
+		concurrency: defaultBatchConcurrency,
 		cacheTtlSec: defaultCacheTtlSec,
+		profile: false,
 		silent: false,
 		args: []
 	};
@@ -536,6 +557,12 @@ function parseOptions( args ) {
 			const ttlRaw = args[ i + 1 ];
 			options.cacheTtlSec = parseInt( ttlRaw || String( defaultCacheTtlSec ), 10 );
 			i++;
+		} else if ( arg === '--concurrency' ) {
+			const raw = args[ i + 1 ];
+			options.concurrency = parseInt( raw || String( defaultBatchConcurrency ), 10 );
+			i++;
+		} else if ( arg === '--profile' ) {
+			options.profile = true;
 		} else {
 			options.args.push( arg );
 		}
@@ -626,16 +653,35 @@ async function runApiPath( requestPath, options = {} ) {
 		return response;
 	}
 	printResponse( response, options );
+	profileLog( options, 'api', startedAt, `path=${ normalizedPath }` );
 	return response;
 }
 
 async function runCitation( format, query, options ) {
 	const startedAt = Date.now();
+	const rawQuery = String( query || '' ).trim();
+	const arxivId = normalizeArxivId( rawQuery );
+	if ( format === 'bibtex' && isLikelyPdfUrl( rawQuery ) && !arxivId ) {
+		const tmpPdfPath = path.join(
+			cacheRootDir,
+			'tmp',
+			`${ makeCacheKey( 'cite-pdf-url', { query: rawQuery } ) }.pdf`
+		);
+		ensurePdfOutputDir( tmpPdfPath );
+		await runFetchPdf( rawQuery, {
+			...options,
+			json: false,
+			silent: true,
+			out: tmpPdfPath
+		} );
+		return runCitationFromPdf( tmpPdfPath, options );
+	}
+	const normalized = normalizeCitationQuery( query );
 	const cached = await readThroughCache(
 		'cite-response',
-		{ format, query },
+		{ format, query: normalized.query },
 		options.cacheTtlSec,
-		async () => withRunningServices( ( ctx ) => queryCitationWithContext( ctx, format, query ) )
+		async () => withRunningServices( ( ctx ) => queryCitationWithContext( ctx, format, normalized.query ) )
 	);
 	const response = cached.value;
 	if ( options.json ) {
@@ -647,6 +693,8 @@ async function runCitation( format, query, options ) {
 			stage: 'done',
 			format,
 			query,
+			query_used: normalized.query,
+			query_normalized: normalized.normalized,
 			response
 		} );
 		return response;
@@ -654,6 +702,12 @@ async function runCitation( format, query, options ) {
 	if ( !options.silent ) {
 		printResponse( response, options );
 	}
+	profileLog(
+		options,
+		'cite',
+		startedAt,
+		`cache_hit=${ cached.cacheHit } normalized=${ normalized.normalized }`
+	);
 	return response;
 }
 
@@ -906,6 +960,33 @@ function detectIdentifierType( input ) {
 		return { type: 'doi', value: normalizeDoi( doiMatch[ 0 ] ) };
 	}
 	throw new Error( `Unsupported identifier: ${ input }` );
+}
+
+function normalizeCitationQuery( rawQuery ) {
+	const query = String( rawQuery || '' ).trim();
+	const arxivId = normalizeArxivId( query );
+	if ( arxivId ) {
+		return {
+			query: `https://arxiv.org/abs/${ arxivId }`,
+			normalized: true
+		};
+	}
+	return {
+		query,
+		normalized: false
+	};
+}
+
+function isLikelyPdfUrl( raw ) {
+	try {
+		const parsed = new URL( String( raw || '' ).trim() );
+		if ( parsed.protocol !== 'http:' && parsed.protocol !== 'https:' ) {
+			return false;
+		}
+		return /\.pdf(?:$|[?#])/i.test( parsed.pathname + parsed.search + parsed.hash );
+	} catch ( error ) {
+		return false;
+	}
 }
 
 function sanitizeFileName( raw ) {
@@ -1545,72 +1626,142 @@ function writeJsonl( rows, outputPath ) {
 	return '';
 }
 
+async function mapWithConcurrency( items, concurrency, mapper ) {
+	const list = Array.isArray( items ) ? items : [];
+	const limit = Math.max( 1, Math.min( Number.isFinite( concurrency ) ? concurrency : 1, list.length || 1 ) );
+	const results = new Array( list.length );
+	let cursor = 0;
+
+	const worker = async () => {
+		while ( true ) {
+			const index = cursor;
+			cursor++;
+			if ( index >= list.length ) {
+				return;
+			}
+			results[ index ] = await mapper( list[ index ], index );
+		}
+	};
+
+	const workers = [];
+	for ( let i = 0; i < limit; i++ ) {
+		workers.push( worker() );
+	}
+	await Promise.all( workers );
+	return results;
+}
+
+function makeBatchRow( index, input, startedAt, output, error ) {
+	if ( error ) {
+		return {
+			index,
+			input,
+			ok: false,
+			elapsed_ms: Date.now() - startedAt,
+			error: error.message
+		};
+	}
+	return {
+		index,
+		input,
+		ok: true,
+		elapsed_ms: Date.now() - startedAt,
+		output
+	};
+}
+
 async function runBatch( options ) {
+	const batchStartedAt = Date.now();
 	const op = options.op || '';
 	const lines = readBatchLines( options.in );
-	const rows = [];
-	for ( let i = 0; i < lines.length; i++ ) {
-		const item = lines[ i ];
-		const startedAt = Date.now();
-		try {
-			let output;
-			if ( op === 'cite' ) {
-				const format = options.format || 'bibtex';
-				const response = await runCitation( format, item, {
-					...options,
-					json: false,
-					headers: false,
-					silent: true
-				} );
-				output = {
-					status_code: response.statusCode,
-					body: response.body
-				};
-			} else if ( op === 'cite-style' ) {
-				const text = await runCitationStyle( item, {
-					...options,
-					json: false,
-					silent: true
-				} );
-				output = { output: text };
-			} else if ( op === 'fetch-pdf' ) {
-				const outPath = await runFetchPdf( item, {
-					...options,
-					json: false,
-					silent: true,
-					out: ''
-				} );
-				output = { out_path: outPath };
-			} else if ( op === 'openurl-resolve' ) {
-				const resolved = await runOpenUrlResolve( item, {
-					...options,
-					json: false,
-					silent: true
-				} );
-				output = resolved;
-			} else {
-				throw new Error( `Unsupported --op: ${ op }` );
-			}
+	const concurrency = Math.max( 1, Number.isFinite( options.concurrency ) ? options.concurrency : defaultBatchConcurrency );
+	let rows = [];
 
-			rows.push( {
-				index: i,
-				input: item,
-				ok: true,
-				elapsed_ms: Date.now() - startedAt,
-				output
-			} );
-		} catch ( error ) {
-			rows.push( {
-				index: i,
-				input: item,
-				ok: false,
-				elapsed_ms: Date.now() - startedAt,
-				error: error.message
-			} );
-		}
+	if ( op === 'cite' ) {
+		const format = options.format || 'bibtex';
+		rows = await withRunningServices( async ( ctx ) => mapWithConcurrency( lines, concurrency, async ( item, i ) => {
+			const startedAt = Date.now();
+			try {
+				const normalized = normalizeCitationQuery( item );
+				const cached = await readThroughCache(
+					'cite-response',
+					{ format, query: normalized.query },
+					options.cacheTtlSec,
+					async () => queryCitationWithContext( ctx, format, normalized.query )
+				);
+				return makeBatchRow( i, item, startedAt, {
+					status_code: cached.value.statusCode,
+					body: cached.value.body,
+					cache_hit: cached.cacheHit,
+					query_used: normalized.query,
+					query_normalized: normalized.normalized
+				} );
+			} catch ( error ) {
+				return makeBatchRow( i, item, startedAt, null, error );
+			}
+		} ) );
+	} else if ( op === 'cite-style' ) {
+		const stylePath = resolveStylePath( options.style );
+		const localeCode = options.locale || 'en-US';
+		rows = await withRunningServices( async ( ctx ) => mapWithConcurrency( lines, concurrency, async ( item, i ) => {
+			const startedAt = Date.now();
+			try {
+				const cached = await readThroughCache(
+					'cite-style',
+					{ query: item, stylePath, localeCode, plain: options.plain },
+					options.cacheTtlSec,
+					async () => {
+						const response = await httpGet(
+							`http://127.0.0.1:${ ctx.citoidPort }/zotero/${ encodeURIComponent( item ) }`
+						);
+						const data = JSON.parse( response.body );
+						if ( !Array.isArray( data ) || !data.length ) {
+							throw new Error( 'No citation result for styled output' );
+						}
+						const cslItem = zoteroToCsl( data[ 0 ] );
+						const renderedHtml = renderWithCsl( cslItem, stylePath, localeCode );
+						return options.plain ? htmlToPlainText( renderedHtml ) : renderedHtml;
+					}
+				);
+				return makeBatchRow( i, item, startedAt, {
+					output: cached.value,
+					cache_hit: cached.cacheHit
+				} );
+			} catch ( error ) {
+				return makeBatchRow( i, item, startedAt, null, error );
+			}
+		} ) );
+	} else if ( op === 'fetch-pdf' || op === 'openurl-resolve' ) {
+		rows = await mapWithConcurrency( lines, concurrency, async ( item, i ) => {
+			const startedAt = Date.now();
+			try {
+				let output;
+				if ( op === 'fetch-pdf' ) {
+					const outPath = await runFetchPdf( item, {
+						...options,
+						json: false,
+						silent: true,
+						out: ''
+					} );
+					output = { out_path: outPath };
+				} else {
+					output = await runOpenUrlResolve( item, {
+						...options,
+						json: false,
+						silent: true
+					} );
+				}
+				return makeBatchRow( i, item, startedAt, output );
+			} catch ( error ) {
+				return makeBatchRow( i, item, startedAt, null, error );
+			}
+		} );
+	} else {
+		throw new Error( `Unsupported --op: ${ op }` );
 	}
 
 	const outFile = writeJsonl( rows, options.outJsonl );
+	profileLog( options, 'batch', batchStartedAt, `op=${ op } count=${ rows.length } concurrency=${ concurrency }` );
 	if ( options.json ) {
 		jsonOut( {
 			ok: true,
