@@ -87,6 +87,8 @@ Note operations:
 ```bash
 bun run local zotero note add AB12CD34 "<p>Key takeaway: ...</p>"
 bun run local zotero note list AB12CD34 --limit 20
+bun run local zotero note search "transformer"
+bun run local zotero note search "transformer" --parent AB12CD34
 bun run local zotero note update CD34EF56 "<p>Updated note</p>"
 bun run local zotero note delete CD34EF56
 bun run local zotero note delete -y CD34EF56

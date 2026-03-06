@@ -88,6 +88,7 @@ function usage() {
 	console.error( '  --api-key <key>    Zotero API key (or set ZOTERO_API_KEY)' );
 	console.error( '  --library-type     users|groups (default: users)' );
 	console.error( '  --library-id <id>  Zotero library id (group id for groups)' );
+	console.error( '  --parent <ref>     parent item key/url (zotero note search)' );
 	console.error( '  --limit <n>        Zotero query/dump limit (1-100)' );
 	console.error( '  -y, --yes          skip interactive confirmation (delete)' );
 	console.error( '  --profile          print timing diagnostics to stderr' );
@@ -173,6 +174,7 @@ function usageZotero( subAction = '' ) {
 		console.error( "  botcite zotero note add <parent-item-key|zotero-url> '<note-html-or-text>'" );
 		console.error( '  botcite zotero note add <parent-item-key|zotero-url> @./note.html' );
 		console.error( '  botcite zotero note list <parent-item-key|zotero-url> [--limit <1-100>]' );
+		console.error( "  botcite zotero note search <text> [--limit <1-100>] [--parent <item-key|zotero-url>]" );
 		console.error( "  botcite zotero note update <note-key|zotero-url> '<note-html-or-text>'" );
 		console.error( '  botcite zotero note update <note-key|zotero-url> @./note.html' );
 		console.error( '  botcite zotero note delete <note-key|zotero-url>' );
@@ -205,6 +207,8 @@ function usageZotero( subAction = '' ) {
 	console.error( "  botcite zotero add '{\"itemType\":\"journalArticle\",\"title\":\"Demo\"}'" );
 	console.error( "  botcite zotero note add AB12CD34 '<p>Important note</p>'" );
 	console.error( '  botcite zotero note list AB12CD34' );
+	console.error( "  botcite zotero note search 'transformer'" );
+	console.error( "  botcite zotero note search 'transformer' --parent AB12CD34" );
 	console.error( '  botcite zotero delete AB12CD34' );
 	console.error( "  botcite zotero update AB12CD34 '{\"title\":\"New title\"}'" );
 	console.error( 'help:' );
@@ -724,6 +728,7 @@ function parseOptions( args ) {
 		zoteroApiKey: defaultZoteroApiKey,
 		zoteroLibraryType: defaultZoteroLibraryType,
 		zoteroLibraryId: defaultZoteroLibraryId,
+		parent: '',
 		limit: 20,
 		yes: false,
 		out: '',
@@ -774,6 +779,9 @@ function parseOptions( args ) {
 			i++;
 		} else if ( arg === '--library-id' || arg === '--zotero-library-id' ) {
 			options.zoteroLibraryId = args[ i + 1 ] || '';
+			i++;
+		} else if ( arg === '--parent' ) {
+			options.parent = args[ i + 1 ] || '';
 			i++;
 		} else if ( arg === '--limit' ) {
 			const raw = args[ i + 1 ];
@@ -2093,6 +2101,87 @@ async function runZoteroNoteList( parentReference, options ) {
 	return rows;
 }
 
+async function runZoteroNoteSearch( query, options ) {
+	const auth = mergeZoteroAuth( options );
+	requireZoteroLibrary( auth );
+	const q = String( query || '' ).trim();
+	if ( !q ) {
+		throw new Error( 'zotero note search requires query text' );
+	}
+	const limit = Math.max( 1, Math.min( 100, Number.isFinite( options.limit ) ? options.limit : 20 ) );
+	let rows = [];
+
+	if ( options.parent ) {
+		const parent = parseZoteroItemReference( options.parent, auth );
+		const useAuth = {
+			...auth,
+			libraryType: parent.libraryType,
+			libraryId: parent.libraryId
+		};
+		const { url, response, body } = await zoteroApiRequest(
+			useAuth,
+			`/${ parent.libraryType }/${ encodeURIComponent( parent.libraryId ) }/items/${ encodeURIComponent( parent.itemKey ) }/children`,
+			{
+				format: 'json',
+				include: 'data',
+				limit: 100
+			}
+		);
+		if ( response.statusCode < 200 || response.statusCode >= 300 ) {
+			throw new Error( `zotero note search failed (${ response.statusCode }) at ${ url }` );
+		}
+		const queryLower = q.toLowerCase();
+		rows = parseZoteroJsonArray( body, url )
+			.filter( ( item ) => item && item.data && item.data.itemType === 'note' )
+			.filter( ( item ) => htmlToPlainText( item.data.note || '' ).toLowerCase().includes( queryLower ) )
+			.slice( 0, limit )
+			.map( ( item ) => ( {
+				key: item.key,
+				parentItem: item.data.parentItem || parent.itemKey,
+				preview: summarizeNote( item.data.note || '' ),
+				dateModified: item.data.dateModified || ''
+			} ) );
+	} else {
+		const { url, response, body } = await zoteroApiRequest(
+			auth,
+			`/${ auth.libraryType }/${ encodeURIComponent( auth.libraryId ) }/items`,
+			{
+				q,
+				itemType: 'note',
+				format: 'json',
+				include: 'data',
+				limit
+			}
+		);
+		if ( response.statusCode < 200 || response.statusCode >= 300 ) {
+			throw new Error( `zotero note search failed (${ response.statusCode }) at ${ url }` );
+		}
+		rows = parseZoteroJsonArray( body, url )
+			.filter( ( item ) => item && item.data && item.data.itemType === 'note' )
+			.map( ( item ) => ( {
+				key: item.key,
+				parentItem: item.data.parentItem || '',
+				preview: summarizeNote( item.data.note || '' ),
+				dateModified: item.data.dateModified || ''
+			} ) );
+	}
+
+	if ( options.json ) {
+		jsonOut( {
+			ok: true,
+			command: 'zotero',
+			stage: 'note-search',
+			query: q,
+			parent: options.parent || null,
+			count: rows.length,
+			notes: rows
+		} );
+		return rows;
+	}
+	process.stdout.write( `${ JSON.stringify( rows, null, 2 ) }\n` );
+	return rows;
+}
+
 async function runZoteroNoteUpdate( noteReference, noteInput, options ) {
 	const payload = {
 		note: normalizeNoteContent( noteInput )
@@ -2139,6 +2228,14 @@ async function runZoteroNoteCommand( options ) {
 			throw new Error( 'zotero note list requires <parent-item-key|zotero-url>' );
 		}
 		await runZoteroNoteList( parentRef, options );
+		return;
+	}
+	if ( action === 'search' ) {
+		const query = options.args.join( ' ' ).trim();
+		if ( !query ) {
+			throw new Error( 'zotero note search requires <text>' );
+		}
+		await runZoteroNoteSearch( query, options );
 		return;
 	}
 	if ( action === 'update' ) {
