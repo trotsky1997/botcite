@@ -71,6 +71,15 @@ services:
       # enable use of NIH PubMed id converter to add pmids and pmcids to citations
       # at the end of a request; defaults to true if undefined
       pubmed: false
+      # enable Semantic Scholar as a supplementary source for DOI/arXiv/search queries
+      semanticScholar:
+        enabled: false
+        api: https://api.semanticscholar.org/graph/v1
+        apiKey: false
+        minIntervalMs: 1000
+        timeout: 5000
+        searchLimit: 2
+        preferForArxiv: true
       # enable use of zotero's translation-server service to query for URLs;
       # defaults to true if undefined
       zotero: true

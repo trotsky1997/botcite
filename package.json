@@ -5,17 +5,41 @@
 	"homepage": "https://www.mediawiki.org/wiki/Citoid",
 	"license": "Apache-2.0",
 	"main": "./app.js",
+	"bin": {
+		"citoid-local": "./scripts/citoid-local.js"
+	},
+	"files": [
+		"app.js",
+		"config.dev.yaml",
+		"config.prod.yaml",
+		"config.yaml",
+		"lib/",
+		"routes/",
+		"scripts/citoid-local.js",
+		"scripts/setup-local.sh",
+		"server.js",
+		"spec.yaml",
+		"targets.yaml",
+		"README.md",
+		"LICENSE"
+	],
 	"scripts": {
-		"start": "service-runner",
+		"start": "bun ./server.js",
+		"local": "bun ./scripts/citoid-local.js",
+		"prepack": "bun -e \"require('fs').accessSync('./scripts/citoid-local.js')\"",
+		"pack:dry-run": "bun pm pack --dry-run",
+		"clean:zone-identifiers": "find . -type f -name '*:Zone.Identifier' -delete",
 		"lint": "eslint --max-warnings 0 --cache .",
 		"lint:fix": "eslint --fix .",
-		"test": "npm run lint && mocha ./test/features/unit/* && mocha ./test/features/errors/* && mocha ./test/features/app/* && mocha --exit ./test/features/scraping/*",
-		"test:zotero": "npm run lint && mocha --exit ./test* ",
+		"test": "bun run lint && mocha ./test/features/unit/* && mocha ./test/features/errors/* && mocha ./test/features/app/* && mocha --exit ./test/features/scraping/*",
+		"test:zotero": "bun run lint && mocha --exit ./test* ",
 		"coverage": "nyc --reporter=lcov _mocha"
 	},
 	"engines": {
-		"node": "20 || 22"
+		"node": "20 || 22",
+		"bun": ">=1.3.10"
 	},
+	"packageManager": "bun@1.3.10",
 	"dependencies": {
 		"bluebird": "3.7.2",
 		"body-parser": "2.2.2",
@@ -24,6 +48,7 @@
 		"chrono-node": "2.9.0",
 		"compression": "1.8.1",
 		"content-type": "1.0.5",
+		"citeproc": "2.4.63",
 		"express": "5.2.1",
 		"extend": "3.0.2",
 		"html-metadata": "3.0.1",

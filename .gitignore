@@ -8,3 +8,5 @@ npm-debug.log
 .eslintcache
 .nyc_output
 .ipynb_checkpoints/
+.local/
+*:Zone.Identifier

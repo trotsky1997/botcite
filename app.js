@@ -54,7 +54,7 @@ function initApp( options ) {
 	}
 
 	// ensure some reasonable defaults
-	if ( !app.conf.port ) {
+	if ( app.conf.port === undefined || app.conf.port === null ) {
 		app.conf.port = 1970;
 	}
 	if ( !app.conf.interface ) {
@@ -282,6 +282,15 @@ function createServer( app ) {
 
 }
 
+function buildApp( options ) {
+	return initApp( options )
+		.then( ( app ) => loadRoutes( app, `${ __dirname }/routes` ) )
+		.then( ( app ) => {
+			app.use( '/static', express.static( `${ __dirname }/static` ) );
+			return app;
+		} );
+}
+
 /**
  * The service's entry point. It takes over the configuration
  * options and the logger- and metrics-reporting objects from
@@ -291,10 +300,6 @@ function createServer( app ) {
  * @param {Object} options
  * @return {bluebird}
  */
-module.exports = ( options ) => initApp( options )
-	.then( ( app ) => loadRoutes( app, `${ __dirname }/routes` ) )
-	.then( ( app ) => {
-		// serve static files from static/
-		app.use( '/static', express.static( `${ __dirname }/static` ) );
-		return app;
-	} ).then( createServer );
+module.exports = ( options ) => buildApp( options ).then( createServer );
+module.exports.buildApp = buildApp;
+module.exports.createServer = createServer;
