@@ -3098,6 +3098,9 @@ class HostRateLimiter {
 	}
 }
 
+// Hard local throttle guard: do not send requests to the same host faster than 1 req/sec.
+const localHardRateLimiter = new HostRateLimiter( 1000 );
+
 function requestExternal( urlString, limiter, options = {} ) {
 	const timeoutMs = options.timeoutMs || defaultRequestTimeoutMs;
 	const maxRedirects = options.maxRedirects || 8;
@@ -3117,7 +3120,10 @@ function requestExternal( urlString, limiter, options = {} ) {
 			}
 
 			try {
-				await limiter.wait( parsed.host );
+				await localHardRateLimiter.wait( parsed.host );
+				if ( limiter && limiter.minIntervalMs > localHardRateLimiter.minIntervalMs ) {
+					await limiter.wait( parsed.host );
+				}
 			} catch ( error ) {
 				reject( error );
 				return;
