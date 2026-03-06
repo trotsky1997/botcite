@@ -23,6 +23,9 @@ Run directly from GitHub (no npm publish required):
 bunx github:trotsky1997/botcite#master --help
 bunx github:trotsky1997/botcite#master cite bibtex "10.1021/acsomega.2c05310"
 bunx github:trotsky1997/botcite#master cite bibtex "https://arxiv.org/pdf/2603.01919.pdf"
+bunx github:trotsky1997/botcite#master citoid formats
+bunx github:trotsky1997/botcite#master citoid bibtex "10.1021/acsomega.2c05310"
+bunx github:trotsky1997/botcite#master citation mediawiki "10.1021/acsomega.2c05310"
 ```
 
 ## MCP mode

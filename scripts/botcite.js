@@ -39,6 +39,7 @@ const defaultFetchConcurrency = parseInt( process.env.CITOID_LOCAL_FETCH_CONCURR
 const defaultBatchConcurrency = parseInt( process.env.CITOID_LOCAL_BATCH_CONCURRENCY || '4', 10 );
 const defaultOpenUrlBase = process.env.OPENURL_BASE || '';
 const defaultZoteroApiBase = process.env.ZOTERO_API_BASE || 'https://api.zotero.org';
+const defaultWmfCitoidBase = process.env.WMF_CITOID_BASE || 'https://en.wikipedia.org/api/rest_v1/data/citation';
 const defaultZoteroUserId = process.env.ZOTERO_USER_ID || '';
 const defaultZoteroApiKey = process.env.ZOTERO_API_KEY || '';
 const defaultZoteroLibraryType = process.env.ZOTERO_LIBRARY_TYPE || 'users';
@@ -58,6 +59,11 @@ function usage() {
 	console.error( 'usage:' );
 	console.error( '  botcite mcp' );
 	console.error( '  botcite setup' );
+	console.error( '  botcite citoid <format> <query>' );
+	console.error( '  botcite citoid formats' );
+	console.error( '  botcite citation <format> <query>' );
+	console.error( '  botcite crossref <doi|query>' );
+	console.error( '  botcite semantic-scholar <doi|arxiv|query>' );
 	console.error( '  botcite api [--headers] <path>' );
 	console.error( '  botcite cite [--headers] <format> <query>' );
 	console.error( '  botcite cite-pdf [--headers] <pdf-path>' );
@@ -73,6 +79,10 @@ function usage() {
 	console.error( "  botcite api --headers '/_info'" );
 	console.error( "  botcite api '/?spec'" );
 	console.error( '  botcite cite bibtex 10.1145/3368089.3409741' );
+	console.error( '  botcite citoid bibtex 10.1145/3368089.3409741' );
+	console.error( '  botcite citoid formats' );
+	console.error( '  botcite crossref 10.1021/acsomega.2c05310' );
+	console.error( '  botcite semantic-scholar 10.1021/acsomega.2c05310' );
 	console.error( '  botcite cite mediawiki https://arxiv.org/abs/1706.03762' );
 	console.error( '  botcite cite-pdf ./paper.pdf' );
 	console.error( '  botcite fetch-pdf 10.1038/s41586-020-2649-2' );
@@ -792,6 +802,7 @@ function parseOptions( args ) {
 		repo: defaultStylesRepo,
 		base: defaultOpenUrlBase,
 		zoteroApiBase: defaultZoteroApiBase,
+		wmfCitoidBase: defaultWmfCitoidBase,
 		zoteroUserId: defaultZoteroUserId,
 		zoteroApiKey: defaultZoteroApiKey,
 		zoteroLibraryType: defaultZoteroLibraryType,
@@ -840,6 +851,9 @@ function parseOptions( args ) {
 			i++;
 		} else if ( arg === '--zotero-api-base' ) {
 			options.zoteroApiBase = args[ i + 1 ] || defaultZoteroApiBase;
+			i++;
+		} else if ( arg === '--wmf-citoid-base' ) {
+			options.wmfCitoidBase = args[ i + 1 ] || defaultWmfCitoidBase;
 			i++;
 		} else if ( arg === '--user-id' || arg === '--zotero-user-id' ) {
 			options.zoteroUserId = args[ i + 1 ] || '';
@@ -2754,6 +2768,77 @@ async function runZoteroCrossref(query, options) {
 	return output;
 }
 
+async function runWmfCitoid(format, query, options) {
+	const outFormat = String( format || '' ).trim();
+	const outQuery = String( query || '' ).trim();
+	if ( !outFormat || !outQuery ) {
+		throw new Error( 'citoid requires <format> and <query>' );
+	}
+	const base = String( options.wmfCitoidBase || defaultWmfCitoidBase ).replace( /\/+$/, '' );
+	const url = `${ base }/${ encodeURIComponent( outFormat ) }/${ encodeURIComponent( outQuery ) }`;
+	const limiter = new HostRateLimiter( 0 );
+	const response = await requestExternal( url, limiter, {
+		headers: {
+			Accept: 'text/plain, application/json;q=0.9',
+			'User-Agent': process.env.USER_AGENT ||
+				`botcite/2.0 (${ process.env.MAILTO || 'example@example.com' })`,
+			'Api-User-Agent': process.env.USER_AGENT ||
+				`botcite/2.0 (${ process.env.MAILTO || 'example@example.com' })`
+		}
+	} );
+	const body = bodyToText( response );
+	if ( response.statusCode < 200 || response.statusCode >= 300 ) {
+		throw new Error( `wmf citoid failed (${ response.statusCode }): ${ body.slice( 0, 220 ) }` );
+	}
+	if ( options.headers ) {
+		process.stdout.write( `HTTP ${ response.statusCode }\n` );
+		Object.entries( response.headers || {} ).forEach( ( [ key, value ] ) => {
+			process.stdout.write( `${ key }: ${ value }\n` );
+		} );
+		process.stdout.write( '\n' );
+	}
+	if ( options.json ) {
+		jsonOut( {
+			ok: true,
+			command: 'citoid',
+			stage: 'done',
+			format: outFormat,
+			query: outQuery,
+			request_url: url,
+			status_code: response.statusCode,
+			headers: response.headers || {},
+			body
+		} );
+		return body;
+	}
+	process.stdout.write( body );
+	if ( !body.endsWith( '\n' ) ) {
+		process.stdout.write( '\n' );
+	}
+	return body;
+}
+
+function runWmfCitoidFormats(options) {
+	const formats = [
+		'bibtex',
+		'mediawiki',
+		'mediawiki-basefields',
+		'zotero'
+	];
+	if ( options.json ) {
+		jsonOut( {
+			ok: true,
+			command: 'citoid',
+			stage: 'formats',
+			formats,
+			wmf_citoid_base: options.wmfCitoidBase || defaultWmfCitoidBase
+		} );
+		return formats;
+	}
+	process.stdout.write( `${ formats.join( '\n' ) }\n` );
+	return formats;
+}
+
 function mapSemanticScholarPaper(p) {
 	const authors = Array.isArray( p.authors ) ? p.authors.map( ( a ) => a.name ).filter( Boolean ) : [];
 	return {
@@ -4105,6 +4190,51 @@ if ( action === 'setup' ) {
 		console.error( error.message );
 		process.exit( 1 );
 	}
+}
+
+if ( action === 'citoid' || action === 'citation' ) {
+	const parsed = parseOptions( process.argv.slice( 3 ) );
+	const formatOrSub = parsed.args[ 0 ];
+	if ( String( formatOrSub || '' ).trim().toLowerCase() === 'formats' ) {
+		runWmfCitoidFormats( parsed );
+		return;
+	}
+	const format = formatOrSub;
+	const query = parsed.args.slice( 1 ).join( ' ' ).trim();
+	if ( !format || !query ) {
+		usage();
+		process.exit( 1 );
+	}
+	runWmfCitoid( format, query, parsed ).catch( ( error ) => {
+		handleCommandError( error, parsed, action );
+	} );
+	return;
+}
+
+if ( action === 'crossref' ) {
+	const parsed = parseOptions( process.argv.slice( 3 ) );
+	const query = parsed.args.join( ' ' ).trim();
+	if ( !query ) {
+		usage();
+		process.exit( 1 );
+	}
+	runZoteroCrossref( query, parsed ).catch( ( error ) => {
+		handleCommandError( error, parsed, 'crossref' );
+	} );
+	return;
+}
+
+if ( action === 'semantic-scholar' ) {
+	const parsed = parseOptions( process.argv.slice( 3 ) );
+	const query = parsed.args.join( ' ' ).trim();
+	if ( !query ) {
+		usage();
+		process.exit( 1 );
+	}
+	runZoteroSemanticScholar( query, parsed ).catch( ( error ) => {
+		handleCommandError( error, parsed, 'semantic-scholar' );
+	} );
+	return;
 }
 
 if ( action === 'styles' ) {
