@@ -1,0 +1,108 @@
+name: Issue Opened/Edited
+
+on:
+  issues:
+    types:
+      - opened
+      - edited
+
+jobs:
+  validate:
+    name: Validate Issue with Custom Logic
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      issues: write
+
+    steps:
+      - name: Checkout Repository
+        id: checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js for Scripts
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Check Issue Title Format
+        run: |
+          if ! echo "${{ github.event.issue.title }}" | grep -Eq '^\[(New|Bug|Enhancement)\]: .+'; then
+            gh issue edit ${{ github.event.issue.number }} --add-label invalid
+            gh issue close ${{ github.event.issue.number }} --comment "标题格式不正确，已自动关闭 issue。\nTitle format is invalid. Expected format: [New|Bug|Enhancement]: description" --reason "completed"
+            exit 0
+          fi
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Set Template Output or Skip
+        id: set-template
+        run: |
+          if ! ${{ contains(github.event.issue.labels.*.name, 'from template') }}; then
+            echo "This issue does not use a template, skipping validation."
+            echo "template=" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          TEMPLATE=""
+          if ${{ contains(github.event.issue.labels.*.name, 'bug') }}; then
+            TEMPLATE="T1_bug.yaml"
+          elif ${{ contains(github.event.issue.labels.*.name, 'enhancement') }}; then
+            TEMPLATE="T2_enhancement.yaml"
+          elif ${{ contains(github.event.issue.labels.*.name, 'new translator') }}; then
+            TEMPLATE="T3_new_translator.yaml"
+          fi
+          echo "template=$TEMPLATE" >> $GITHUB_OUTPUT
+
+      - name: Install Dependencies
+        id: install
+        if: steps.set-template.outputs.template != ''
+        run: npm install
+
+      - name: Parse Issue Body
+        id: parse
+        if: steps.set-template.outputs.template != ''
+        uses: issue-ops/parser@v4
+        with:
+          body: ${{ github.event.issue.body }}
+          issue-form-template: ${{ steps.set-template.outputs.template }}
+          workspace: ${{ github.workspace }}
+
+      - name: Validate Issue Forms
+        id: validate
+        if: steps.set-template.outputs.template != ''
+        uses: issue-ops/validator@v3
+        with:
+          issue-form-template: ${{ steps.set-template.outputs.template }}
+          parsed-issue-body: ${{ steps.parse.outputs.json }}
+          workspace: ${{ github.workspace }}
+
+      - name: Install Dependencies
+        id: install
+        if: steps.validate-title.outputs.should-continue == 'true'
+        run: npm install
+
+      - name: Parse Issue Body
+        id: parse
+        if: steps.validate-title.outputs.should-continue == 'true'
+        uses: issue-ops/parser@v4
+        with:
+          body: ${{ github.event.issue.body }}
+          issue-form-template: ${{ steps.validate-title.outputs.template }}
+          workspace: ${{ github.workspace }}
+
+      - name: Validate Issue Forms
+        id: validate
+        if: steps.validate-title.outputs.should-continue == 'true'
+        uses: issue-ops/validator@v3
+        with:
+          issue-form-template: ${{ steps.validate-title.outputs.template }}
+          parsed-issue-body: ${{ steps.parse.outputs.json }}
+          workspace: ${{ github.workspace }}
+
+      - name: Handle Validation Errors
+        if: steps.validate-title.outputs.should-continue == 'true' && steps.validate.outputs.errors != ''
+        run: |
+          gh issue edit ${{ github.event.issue.number }} --add-label invalid
+          gh issue close ${{ github.event.issue.number }} --comment "请仔细阅读 issue 模板中的说明。" --reason "completed"
+        env:
+          GH_TOKEN: ${{ github.token }}

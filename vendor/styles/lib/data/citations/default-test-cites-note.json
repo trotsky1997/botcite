@@ -1,0 +1,63 @@
+[
+	[
+		{
+			"id": "gbt7714.b.1:1",
+			"label": "page",
+			"locator": "903"
+		}
+	],
+	[
+		{
+			"id": "gbt7714.b.1:2",
+			"label": "page",
+			"locator": "260"
+		}
+	],
+	[
+		{
+			"id": "molc.14:16"
+		}
+	],
+	[
+		{
+			"id": "gbt7714.b.1:2",
+			"label": "page",
+			"locator": "326-329"
+		}
+	],
+	[
+		{
+			"id": "gbt7714.b.1:2",
+			"label": "page",
+			"locator": "326-329"
+		}
+	],
+	[
+		{
+			"id": "gbt7714.b.1:2",
+			"label": "page",
+			"locator": "260"
+		}
+	],
+	[
+		{
+			"id": "molc.14:16",
+			"label": "page",
+			"locator": "330"
+		}
+	],
+	[
+		{
+			"id": "molc.14:16",
+			"label": "page",
+			"locator": "330"
+		}
+	],
+	[
+		{
+			"id": "molc.14:16",
+			"label": "page",
+			"locator": "331"
+		}
+	]
+]

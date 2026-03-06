@@ -1,0 +1,12 @@
+[submodule "modules/translators"]
+	path = modules/translators
+	url = https://gitlab.wikimedia.org/repos/mediawiki/services/zotero-translators.git
+[submodule "modules/utilities"]
+	path = modules/utilities
+	url = https://github.com/zotero/utilities.git
+[submodule "modules/translate"]
+	path = modules/translate
+	url = https://github.com/zotero/translate.git
+[submodule "modules/zotero-schema"]
+	path = modules/zotero-schema
+	url = https://github.com/zotero/zotero-schema.git

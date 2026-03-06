@@ -1,0 +1,31 @@
+include:
+  - project: repos/releng/kokkuri
+    file: includes/images.yaml
+  - project: repos/releng/docpub
+    file: includes/publish.yml
+
+variables:
+  GIT_SUBMODULE_STRATEGY: recursive
+
+stages:
+- build-and-test-image
+- publish
+
+build-and-test-image:
+  extends: .kokkuri:build-and-run-image
+  stage: build-and-test-image
+  variables:
+    BUILD_VARIANT: test
+
+publish:
+  extends: .kokkuri:build-and-publish-image
+  rules:
+  - if: $CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH &&
+      $CI_COMMIT_REF_PROTECTED
+  stage: publish
+  tags:
+  - trusted
+  variables:
+    BUILD_VARIANT: production
+    PUBLISH_IMAGE_EXTRA_TAGS: latest
+    PUBLISH_IMAGE_TAG: $KOKKURI_PIPELINE_TIMESTAMP-$BUILD_VARIANT

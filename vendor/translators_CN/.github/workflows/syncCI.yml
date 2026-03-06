@@ -1,0 +1,47 @@
+name: Sync CI
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 0 1 * *' # 每个月的第一天执行
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+    - name: Checkout this repository
+      uses: actions/checkout@v3
+      with:
+        path: this
+        token: ${{ secrets.WORKFLOW_TOKEN }}
+
+    - name: Checkout official repository
+      uses: actions/checkout@v3
+      with:
+        repository: zotero/translators
+        path: official
+        token: ${{ secrets.WORKFLOW_TOKEN }}
+
+    - name: Copy CI related folders and files from official to this repository
+      run: |
+        cd this
+        rm -rf .ci
+        cp -rf ../official/.ci ./
+        sed -i 's/\btranslators\/translators\b/translators_CN\/translators_CN/g' ../official/.github/workflows/ci.yml
+        cp -f ../official/.github/workflows/ci.yml ./.github/workflows/ci.yml
+        cp -f ../official/.eslintrc ./.eslintrc
+        cp -f ../official/index.d.ts ./index.d.ts
+        cp -f ../official/jsconfig.json ./jsconfig.json
+        cp -f ../official/package-lock.json ./package-lock.json
+        cp -f ../official/package.json ./package.json
+
+    - name: Commit and push changes to this repository
+      uses: EndBug/add-and-commit@v9
+      with:
+          cwd: './this'
+          author_name: GitHub Actions Bot
+          author_email: actions@github.com
+          message: 'Sync CI with official repository'

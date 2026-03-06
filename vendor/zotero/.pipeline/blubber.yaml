@@ -1,0 +1,27 @@
+# syntax=docker-registry.wikimedia.org/repos/releng/blubber/buildkit:v1.5.0
+version: v4
+base: docker-registry.wikimedia.org/nodejs22-slim
+variants:
+  build:
+    base: docker-registry.wikimedia.org/nodejs22-slim
+    copies: [local]
+    apt: { packages: [git, build-essential] }
+    node: { requirements: [package.json, package-lock.json] }
+    runs: { environment: { LINK: g++ } }
+  test:
+    includes: [build]
+    runs:
+      insecurely: true
+    entrypoint: [npm, test]
+
+  prep:
+    includes: [build]
+    node: { env: production }
+
+  production:
+    runs:
+      environment: { NODEJS_V8_HEAP_SIZE_IN_MB: "1700" }
+    copies: [prep]
+    apt: { packages: [ca-certificates] }
+    node: { env: production }
+    entrypoint: [/bin/bash, -c, "node --max-old-space-size=$NODEJS_V8_HEAP_SIZE_IN_MB src/server.js"]

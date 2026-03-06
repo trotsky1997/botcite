@@ -1,0 +1,47 @@
+name: Auto update translator metadata
+on: 
+  push:
+    branches:
+      - master
+      - test
+    
+    paths:
+      - '*.js'
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+    # copy git 仓库到虚拟机上
+    - name: 'Checkout codes'
+      uses: actions/checkout@v3
+      with:
+        fetch-depth: 0
+
+    # fix fatal: ambiguous argument 'HEAD~1': unknown revision or path not in the working tree.
+    - run: git checkout master
+
+    - name: Install Node
+      uses: actions/setup-node@v2
+      with:
+        node-version: 17
+    
+    # Local via act
+    - name: Install packages for act
+      if: env.ACT == 'true'
+      run: apt update && apt install -y xvfb git rsync
+
+    - name: Install node packages
+      run: npm ci
+
+    - name: Update metadata
+      run: |
+        node data/updateJSON.js
+
+    - name: Amend to original commit
+      run: |
+        git config --global user.name "GitHub Actions Bot"
+        git config --global user.email "actions@github.com"
+        git add data/*.json
+        git commit --amend --no-edit
+        git push origin HEAD --force

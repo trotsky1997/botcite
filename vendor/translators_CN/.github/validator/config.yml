@@ -1,0 +1,3 @@
+validators:
+  - field: new-translator-url
+    script: url.js

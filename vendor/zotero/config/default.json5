@@ -1,0 +1,16 @@
+{
+	"allowedOrigins": [], // CORS
+	"blacklistedDomains": [],
+	"deproxifyURLs": false, // Automatically try deproxified versions of URLs
+	"identifierSearchLambda": "", // Identifier search Lambda function for text search
+	"port": 1969,
+	"host": "0.0.0.0", // host to listen on
+	"httpMaxResponseSize": 10, // Max size of requested response to load; triggers 400 ResponseSize error when exceeded
+	"textSearchTimeout": 5,
+	"translators": {
+		"CrossrefREST.email": "" // Pass an email to Crossref REST API to utilize the faster servers pool
+	},
+	"trustProxyHeaders": false, // Trust X-Forwarded-For when logging requests
+	"userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36",
+	"translatorsDirectory": "./modules/translators"
+}

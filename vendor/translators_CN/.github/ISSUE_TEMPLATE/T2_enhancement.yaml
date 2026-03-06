@@ -1,0 +1,25 @@
+name: 请求支持新功能💪
+description: 为现有转换器添加新功能。
+title: "[Enhancement]: "
+labels: ["enhancement", "from template"]
+assignees:
+  - jiaojiaodubai
+body:
+  - type: input
+    id: enhancement-url
+    attributes:
+      label: 链接
+      description: 网站的网址，或文献交换格式的文档地址。
+    validations:
+      required: true
+  - type: checkboxes
+    id: features
+    attributes:
+      label: 你想添加的功能
+      description: 请选择你希望添加的功能。
+      options:
+        - label: 支持抓取/导出附件
+        - label: 支持抓取网页快照
+        - label: 支持抓取引用数
+    validations:
+      required: true
