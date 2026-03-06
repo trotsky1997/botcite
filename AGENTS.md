@@ -16,7 +16,7 @@ Use Bun (recommended) with Node.js 20 or 22 available for compatibility checks.
 
 - `bun install`: install dependencies (uses `bun.lock`).
 - `bun run start`: run via `service-runner` using `config.yaml`.
-- `bun run local`: run local CLI wrapper (`scripts/citoid-local.js`).
+- `bun run local`: run local CLI wrapper (`scripts/botcite.js`).
 - `bun run test`: lint + core feature suites.
 - `bun run test:zotero`: full test run including Zotero-heavy tests.
 - `bun run coverage`: run `nyc` coverage.

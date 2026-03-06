@@ -64,6 +64,6 @@ zotero dir: $ZOTERO_DIR
 merged translators dir: $LOCAL_TRANSLATORS_DIR
 
 next:
-  npx --no-install citoid-local cite bibtex 10.1145/3368089.3409741
-  npx --no-install citoid-local api '/_info'
+  npx --no-install botcite cite bibtex 10.1145/3368089.3409741
+  npx --no-install botcite api '/_info'
 EOF

@@ -6,7 +6,7 @@
 	"license": "Apache-2.0",
 	"main": "./app.js",
 	"bin": {
-		"citoid-local": "./scripts/citoid-local.js"
+		"botcite": "./scripts/botcite.js"
 	},
 	"files": [
 		"app.js",
@@ -15,7 +15,7 @@
 		"config.yaml",
 		"lib/",
 		"routes/",
-		"scripts/citoid-local.js",
+		"scripts/botcite.js",
 		"scripts/setup-local.sh",
 		"server.js",
 		"spec.yaml",
@@ -25,8 +25,8 @@
 	],
 	"scripts": {
 		"start": "bun ./server.js",
-		"local": "bun ./scripts/citoid-local.js",
-		"prepack": "bun -e \"require('fs').accessSync('./scripts/citoid-local.js')\"",
+		"local": "bun ./scripts/botcite.js",
+		"prepack": "bun -e \"require('fs').accessSync('./scripts/botcite.js')\"",
 		"pack:dry-run": "bun pm pack --dry-run",
 		"clean:zone-identifiers": "find . -type f -name '*:Zone.Identifier' -delete",
 		"lint": "eslint --max-warnings 0 --cache .",

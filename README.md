@@ -9,7 +9,7 @@ Citoid is a Bun-powered service which locates citation data given a URL, DOI and
 2. Run `bun run start -c config.dev.yaml`
 3. Open [http://localhost:1970/?doc](http://localhost:1970/?doc#!/Citations/get_api) in your browser
 
-## One-shot CLI (`citoid-local`)
+## One-shot CLI (`botcite`)
 Run locally:
 
 ```bash
@@ -20,7 +20,7 @@ bun run local cite bibtex 10.48550/arXiv.1706.03762
 Run directly from GitHub (no npm publish required):
 
 ```bash
-bunx github:YOUR_ORG/mediawiki-services-citoid#main citoid-local --help
+bunx github:YOUR_ORG/mediawiki-services-citoid#main botcite --help
 ```
 
 ## Packaging & publish

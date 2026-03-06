@@ -44,30 +44,30 @@ BBPromise.onPossiblyUnhandledRejection( () => {
 
 function usage() {
 	console.error( 'usage:' );
-	console.error( '  citoid-local setup' );
-	console.error( '  citoid-local api [--headers] <path>' );
-	console.error( '  citoid-local cite [--headers] <format> <query>' );
-	console.error( '  citoid-local cite-pdf [--headers] <pdf-path>' );
-	console.error( '  citoid-local fetch-pdf [--base <openurl-base>] [--out <file.pdf>] <doi|arxiv|url>' );
-	console.error( '  citoid-local openurl-resolve [--base <openurl-base>] <doi|arxiv|url>' );
-	console.error( '  citoid-local batch --op <cite|cite-style|fetch-pdf|openurl-resolve> --in <file>' );
-	console.error( '  citoid-local styles sync [--repo <git-url>]' );
-	console.error( '  citoid-local cite-style [--plain] [--style <name-or-path>] [--locale zh-CN] <query>' );
-	console.error( '  citoid-local info' );
-	console.error( '  citoid-local spec' );
+	console.error( '  botcite setup' );
+	console.error( '  botcite api [--headers] <path>' );
+	console.error( '  botcite cite [--headers] <format> <query>' );
+	console.error( '  botcite cite-pdf [--headers] <pdf-path>' );
+	console.error( '  botcite fetch-pdf [--base <openurl-base>] [--out <file.pdf>] <doi|arxiv|url>' );
+	console.error( '  botcite openurl-resolve [--base <openurl-base>] <doi|arxiv|url>' );
+	console.error( '  botcite batch --op <cite|cite-style|fetch-pdf|openurl-resolve> --in <file>' );
+	console.error( '  botcite styles sync [--repo <git-url>]' );
+	console.error( '  botcite cite-style [--plain] [--style <name-or-path>] [--locale zh-CN] <query>' );
+	console.error( '  botcite info' );
+	console.error( '  botcite spec' );
 	console.error( 'examples:' );
-	console.error( "  citoid-local api --headers '/_info'" );
-	console.error( "  citoid-local api '/?spec'" );
-	console.error( '  citoid-local cite bibtex 10.1145/3368089.3409741' );
-	console.error( '  citoid-local cite mediawiki https://arxiv.org/abs/1706.03762' );
-	console.error( '  citoid-local cite-pdf ./paper.pdf' );
-	console.error( '  citoid-local fetch-pdf 10.1038/s41586-020-2649-2' );
-	console.error( '  citoid-local fetch-pdf 1706.03762 --out ./attention.pdf' );
-	console.error( "  citoid-local openurl-resolve --base 'https://example.edu/openurl' 10.1038/s41586-020-2649-2" );
-	console.error( '  citoid-local batch --op cite --format bibtex --in ./ids.txt --out-jsonl ./result.jsonl' );
-	console.error( '  citoid-local styles sync' );
-	console.error( "  citoid-local cite-style --locale zh-CN '10.1145/3368089.3409741'" );
-	console.error( "  citoid-local cite-style --plain --locale zh-CN '10.1145/3368089.3409741'" );
+	console.error( "  botcite api --headers '/_info'" );
+	console.error( "  botcite api '/?spec'" );
+	console.error( '  botcite cite bibtex 10.1145/3368089.3409741' );
+	console.error( '  botcite cite mediawiki https://arxiv.org/abs/1706.03762' );
+	console.error( '  botcite cite-pdf ./paper.pdf' );
+	console.error( '  botcite fetch-pdf 10.1038/s41586-020-2649-2' );
+	console.error( '  botcite fetch-pdf 1706.03762 --out ./attention.pdf' );
+	console.error( "  botcite openurl-resolve --base 'https://example.edu/openurl' 10.1038/s41586-020-2649-2" );
+	console.error( '  botcite batch --op cite --format bibtex --in ./ids.txt --out-jsonl ./result.jsonl' );
+	console.error( '  botcite styles sync' );
+	console.error( "  botcite cite-style --locale zh-CN '10.1145/3368089.3409741'" );
+	console.error( "  botcite cite-style --plain --locale zh-CN '10.1145/3368089.3409741'" );
 }
 
 function runScript( scriptPath, args = [] ) {
@@ -228,7 +228,7 @@ function ensureStyleRuntime() {
 	if ( fileExists( cslDir ) && fileExists( localeDir ) ) {
 		return;
 	}
-	throw new Error( 'Styles are not synced. Run: citoid-local styles sync' );
+	throw new Error( 'Styles are not synced. Run: botcite styles sync' );
 }
 
 function walkFiles( dirPath ) {
@@ -440,7 +440,7 @@ function createSilentLogger() {
 	} );
 
 	return wrap( bunyan.createLogger( {
-		name: 'citoid-local',
+		name: 'botcite',
 		streams: [ { type: 'raw', stream: discard } ]
 	} ) );
 }
@@ -558,7 +558,7 @@ async function withRunningServices( callback ) {
 	serviceConf.interface = '127.0.0.1';
 	serviceConf.zoteroInterface = '127.0.0.1';
 	serviceConf.zoteroPort = zoteroPort;
-	serviceConf.user_agent = 'citoid-local-cli';
+	serviceConf.user_agent = 'botcite-cli';
 	serviceConf.mailto = process.env.MAILTO || 'example@example.com';
 	// eslint-disable-next-line security/detect-non-literal-fs-filename
 	fs.writeFileSync( zoteroLogPath, '' );
@@ -1084,7 +1084,7 @@ function buildOpenUrlQueries( normalized ) {
 	const common = {
 		url_ver: 'Z39.88-2004',
 		ctx_ver: 'Z39.88-2004',
-		sid: 'citoid-local:fetch-pdf'
+		sid: 'botcite:fetch-pdf'
 	};
 
 	if ( normalized.type === 'doi' ) {
