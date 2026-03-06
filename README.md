@@ -133,12 +133,20 @@ bun run local zotero templates paper --apply
 # watch query and append new cites to bib
 bun run local zotero watch "transformer" --out-bib ./watch.bib --interval 60
 
-# external metadata APIs (zotero-level access)
-bun run local zotero crossref 10.1021/acsomega.2c05310
-bun run local zotero crossref "transformer attention is all you need" --limit 5
-bun run local zotero semantic-scholar 10.1021/acsomega.2c05310
-bun run local zotero semantic-scholar "transformer attention is all you need" --limit 5
+# external metadata APIs (top-level access)
+bun run local crossref 10.1021/acsomega.2c05310
+bun run local crossref "transformer attention is all you need" --limit 5
+bun run local semantic-scholar 10.1021/acsomega.2c05310
+bun run local semantic-scholar "transformer attention is all you need" --limit 5
+
+# full Semantic Scholar Graph API exposure
+bun run local semantic-scholar api /paper/DOI:10.1021%2Facsomega.2c05310 --params '{"fields":"title,year,authors"}'
+bun run local semantic-scholar paper-search "transformer attention" --limit 5 --fields "title,year,authors,url"
+bun run local semantic-scholar paper-batch @./paper_ids.txt --fields "title,year,authors"
+bun run local semantic-scholar author 1741101 --fields "name,paperCount,citationCount"
 ```
+
+Note: Semantic Scholar may return `429` without an API key. Use `--s2-api-key <key>` or set `S2_API_KEY`.
 
 Logout:
 

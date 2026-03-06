@@ -64,12 +64,20 @@ function usage() {
 	console.error( '  botcite citation <format> <query>' );
 	console.error( '  botcite crossref <doi|query>' );
 	console.error( '  botcite semantic-scholar <doi|arxiv|query>' );
+	console.error( '  botcite semantic-scholar api <path> [--method GET|POST] [--params <json>] [--body <json|@file>]' );
+	console.error( '  botcite semantic-scholar paper <paperId>' );
+	console.error( '  botcite semantic-scholar paper-search <query> [--limit <n>] [--offset <n>]' );
+	console.error( '  botcite semantic-scholar paper-search-bulk <query> [--token <token>]' );
+	console.error( '  botcite semantic-scholar paper-batch <id1,id2,...|@file>' );
+	console.error( '  botcite semantic-scholar author <authorId>' );
+	console.error( '  botcite semantic-scholar author-papers <authorId> [--limit <n>] [--offset <n>]' );
+	console.error( '  botcite semantic-scholar author-batch <id1,id2,...|@file>' );
 	console.error( '  botcite api [--headers] <path>' );
 	console.error( '  botcite cite [--headers] <format> <query>' );
 	console.error( '  botcite cite-pdf [--headers] <pdf-path>' );
 	console.error( '  botcite fetch-pdf [--base <openurl-base>] [--out <file.pdf>] <doi|arxiv|url>' );
 	console.error( '  botcite openurl-resolve [--base <openurl-base>] <doi|arxiv|url>' );
-	console.error( '  botcite zotero <login|logout|whoami|query|dump|cite|add|delete|update|note|sync-cite|dedup|enrich|export|watch|templates|safe-mode|crossref|semantic-scholar> [...]' );
+	console.error( '  botcite zotero <login|logout|whoami|query|dump|cite|add|delete|update|note|sync-cite|dedup|enrich|export|watch|templates|safe-mode> [...]' );
 	console.error( '  botcite batch --op <cite|cite-style|fetch-pdf|openurl-resolve> --in <file>' );
 	console.error( '  botcite styles sync [--repo <git-url>]' );
 	console.error( '  botcite cite-style [--plain] [--style <name-or-path>] [--locale zh-CN] <query>' );
@@ -83,6 +91,7 @@ function usage() {
 	console.error( '  botcite citoid formats' );
 	console.error( '  botcite crossref 10.1021/acsomega.2c05310' );
 	console.error( '  botcite semantic-scholar 10.1021/acsomega.2c05310' );
+	console.error( '  botcite semantic-scholar paper-search "transformer attention" --limit 5' );
 	console.error( '  botcite cite mediawiki https://arxiv.org/abs/1706.03762' );
 	console.error( '  botcite cite-pdf ./paper.pdf' );
 	console.error( '  botcite fetch-pdf 10.1038/s41586-020-2649-2' );
@@ -232,19 +241,8 @@ function usageZotero( subAction = '' ) {
 		console.error( '  botcite zotero safe-mode <on|off|status>' );
 		return;
 	}
-	if ( action === 'crossref' ) {
-		console.error( 'usage:' );
-		console.error( '  botcite zotero crossref <doi|query> [--limit <n>]' );
-		return;
-	}
-	if ( action === 'semantic-scholar' ) {
-		console.error( 'usage:' );
-		console.error( '  botcite zotero semantic-scholar <doi|arxiv|query> [--limit <n>] [--s2-api-key <k>]' );
-		return;
-	}
-
 	console.error( 'usage:' );
-	console.error( '  botcite zotero <login|logout|whoami|query|dump|cite|add|delete|update|note|sync-cite|dedup|enrich|export|watch|templates|safe-mode|crossref|semantic-scholar> [...]' );
+	console.error( '  botcite zotero <login|logout|whoami|query|dump|cite|add|delete|update|note|sync-cite|dedup|enrich|export|watch|templates|safe-mode> [...]' );
 	console.error( 'commands:' );
 	console.error( '  login   save Zotero API credentials locally' );
 	console.error( '  logout  clear saved credentials' );
@@ -263,8 +261,6 @@ function usageZotero( subAction = '' ) {
 	console.error( '  watch   poll query and append new cites to bib file' );
 	console.error( '  templates show/apply item templates' );
 	console.error( '  safe-mode persistent dry-run guardrail for write ops' );
-	console.error( '  crossref query Crossref API by DOI or text query' );
-	console.error( '  semantic-scholar query Semantic Scholar API by DOI/arXiv/query' );
 	console.error( 'examples:' );
 	console.error( '  botcite zotero login --user-id 123456 --api-key xxxx' );
 	console.error( '  botcite zotero whoami' );
@@ -283,8 +279,6 @@ function usageZotero( subAction = '' ) {
 	console.error( "  botcite zotero watch 'transformer' --out-bib ./watch.bib --interval 60" );
 	console.error( '  botcite zotero templates paper' );
 	console.error( '  botcite zotero safe-mode on' );
-	console.error( '  botcite zotero crossref 10.1038/s41586-020-2649-2' );
-	console.error( "  botcite zotero semantic-scholar '10.1038/s41586-020-2649-2'" );
 	console.error( "  botcite zotero note search 'transformer'" );
 	console.error( "  botcite zotero note search 'transformer' --parent AB12CD34" );
 	console.error( '  botcite zotero delete AB12CD34' );
@@ -810,10 +804,23 @@ function parseOptions( args ) {
 		s2ApiKey: defaultS2ApiKey,
 		parent: '',
 		limit: 20,
+		offset: 0,
 		intervalSec: 60,
 		outBib: '',
 		apply: false,
 		dryRun: false,
+		method: 'GET',
+		params: '',
+		body: '',
+		fields: '',
+		sort: '',
+		year: '',
+		token: '',
+		minCitationCount: '',
+		publicationTypes: '',
+		venue: '',
+		fieldsOfStudy: '',
+		openAccessPdf: '',
 		yes: false,
 		out: '',
 		op: '',
@@ -877,9 +884,49 @@ function parseOptions( args ) {
 			const raw = args[ i + 1 ];
 			options.limit = parseInt( raw || '20', 10 );
 			i++;
+		} else if ( arg === '--offset' ) {
+			const raw = args[ i + 1 ];
+			options.offset = parseInt( raw || '0', 10 );
+			i++;
 		} else if ( arg === '--interval' ) {
 			const raw = args[ i + 1 ];
 			options.intervalSec = parseInt( raw || '60', 10 );
+			i++;
+		} else if ( arg === '--method' ) {
+			options.method = ( args[ i + 1 ] || 'GET' ).toUpperCase();
+			i++;
+		} else if ( arg === '--params' ) {
+			options.params = args[ i + 1 ] || '';
+			i++;
+		} else if ( arg === '--body' ) {
+			options.body = args[ i + 1 ] || '';
+			i++;
+		} else if ( arg === '--fields' ) {
+			options.fields = args[ i + 1 ] || '';
+			i++;
+		} else if ( arg === '--sort' ) {
+			options.sort = args[ i + 1 ] || '';
+			i++;
+		} else if ( arg === '--year' ) {
+			options.year = args[ i + 1 ] || '';
+			i++;
+		} else if ( arg === '--token' ) {
+			options.token = args[ i + 1 ] || '';
+			i++;
+		} else if ( arg === '--min-citation-count' ) {
+			options.minCitationCount = args[ i + 1 ] || '';
+			i++;
+		} else if ( arg === '--publication-types' ) {
+			options.publicationTypes = args[ i + 1 ] || '';
+			i++;
+		} else if ( arg === '--venue' ) {
+			options.venue = args[ i + 1 ] || '';
+			i++;
+		} else if ( arg === '--fields-of-study' ) {
+			options.fieldsOfStudy = args[ i + 1 ] || '';
+			i++;
+		} else if ( arg === '--open-access-pdf' ) {
+			options.openAccessPdf = args[ i + 1 ] || '';
 			i++;
 		} else if ( arg === '--out-bib' ) {
 			options.outBib = args[ i + 1 ] || '';
@@ -2731,7 +2778,7 @@ function mapCrossrefWork(work) {
 async function runZoteroCrossref(query, options) {
 	const q = String( query || '' ).trim();
 	if ( !q ) {
-		throw new Error( 'zotero crossref requires <doi|query>' );
+		throw new Error( 'crossref requires <doi|query>' );
 	}
 	const limiter = new HostRateLimiter( 0 );
 	let url;
@@ -2761,7 +2808,7 @@ async function runZoteroCrossref(query, options) {
 		output = items.map( mapCrossrefWork );
 	}
 	if ( options.json ) {
-		jsonOut( { ok: true, command: 'zotero', stage: 'crossref', query: q, result: output } );
+		jsonOut( { ok: true, command: 'crossref', stage: 'done', query: q, result: output } );
 		return output;
 	}
 	process.stdout.write( `${ JSON.stringify( output, null, 2 ) }\n` );
@@ -2853,50 +2900,254 @@ function mapSemanticScholarPaper(p) {
 	};
 }
 
-async function runZoteroSemanticScholar(query, options) {
-	const q = String( query || '' ).trim();
-	if ( !q ) {
-		throw new Error( 'zotero semantic-scholar requires <doi|arxiv|query>' );
+function parseJsonOptionArg(raw, label) {
+	if ( !raw ) {
+		return {};
 	}
+	try {
+		const parsed = JSON.parse( raw );
+		if ( parsed && typeof parsed === 'object' && !Array.isArray( parsed ) ) {
+			return parsed;
+		}
+		throw new Error( `${ label } must be JSON object` );
+	} catch ( error ) {
+		throw new Error( `Invalid JSON for ${ label }: ${ error.message }` );
+	}
+}
+
+function parseMaybeJsonBody(raw) {
+	const text = String( raw || '' ).trim();
+	if ( !text ) {
+		return undefined;
+	}
+	if ( text.startsWith( '@' ) ) {
+		const filePath = path.resolve( text.slice( 1 ) );
+		if ( !fileExists( filePath ) ) {
+			throw new Error( `Body file not found: ${ filePath }` );
+		}
+		return JSON.parse( fs.readFileSync( filePath, 'utf8' ) );
+	}
+	return JSON.parse( text );
+}
+
+function parseIdsInput(raw) {
+	const text = String( raw || '' ).trim();
+	if ( !text ) {
+		return [];
+	}
+	if ( text.startsWith( '@' ) ) {
+		const filePath = path.resolve( text.slice( 1 ) );
+		if ( !fileExists( filePath ) ) {
+			throw new Error( `IDs file not found: ${ filePath }` );
+		}
+		return fs.readFileSync( filePath, 'utf8' )
+			.split( /\r?\n/ )
+			.map( ( x ) => x.trim() )
+			.filter( Boolean );
+	}
+	return text.split( ',' ).map( ( x ) => x.trim() ).filter( Boolean );
+}
+
+async function semanticScholarApiCall(pathname, options = {}) {
 	const limiter = new HostRateLimiter( 0 );
 	const headers = {
-		Accept: 'application/json'
+		Accept: 'application/json',
+		'User-Agent': process.env.USER_AGENT || `botcite/2.0 (${ process.env.MAILTO || 'example@example.com' })`,
+		...options.headers
 	};
 	const apiKey = String( options.s2ApiKey || defaultS2ApiKey ).trim();
 	if ( apiKey ) {
 		headers[ 'x-api-key' ] = apiKey;
 	}
-	const fields = 'title,year,venue,citationCount,externalIds,authors,url';
-	let url;
-	let mode = 'search';
-	const arxivId = normalizeArxivId( q );
-	const doiMatch = q.match( /\b10\.\d{4,9}\/[-._;()/:A-Z0-9]+\b/i );
-	if ( doiMatch ) {
-		mode = 'paper';
-		const doi = normalizeDoi( doiMatch[ 0 ] );
-		url = `https://api.semanticscholar.org/graph/v1/paper/DOI:${ encodeURIComponent( doi ) }?fields=${ encodeURIComponent( fields ) }`;
-	} else if ( arxivId ) {
-		mode = 'paper';
-		url = `https://api.semanticscholar.org/graph/v1/paper/ARXIV:${ encodeURIComponent( arxivId ) }?fields=${ encodeURIComponent( fields ) }`;
-	} else {
-		const limit = Math.max( 1, Math.min( 20, Number.isFinite( options.limit ) ? options.limit : 5 ) );
-		url = `https://api.semanticscholar.org/graph/v1/paper/search?query=${ encodeURIComponent( q ) }&limit=${ limit }&fields=${ encodeURIComponent( fields ) }`;
-	}
-	const response = await requestExternal( url, limiter, { headers } );
+	const base = 'https://api.semanticscholar.org/graph/v1';
+	const urlObj = new URL( `${ base }${ pathname.startsWith( '/' ) ? pathname : `/${ pathname }` }` );
+	const params = options.params || {};
+	Object.entries( params ).forEach( ( [ k, v ] ) => {
+		if ( v !== undefined && v !== null && v !== '' ) {
+			urlObj.searchParams.set( k, String( v ) );
+		}
+	} );
+	const response = await requestExternal( urlObj.toString(), limiter, {
+		method: options.method || 'GET',
+		headers,
+		bodyText: options.body !== undefined ? JSON.stringify( options.body ) : undefined
+	} );
 	const body = bodyToText( response );
 	if ( response.statusCode < 200 || response.statusCode >= 300 ) {
-		throw new Error( `semantic-scholar request failed (${ response.statusCode })` );
+		throw new Error( `semantic-scholar request failed (${ response.statusCode}): ${ body.slice( 0, 220 ) }` );
 	}
-	const parsed = JSON.parse( body );
-	const output = mode === 'paper' ?
-		mapSemanticScholarPaper( parsed ) :
-		( Array.isArray( parsed.data ) ? parsed.data.map( mapSemanticScholarPaper ) : [] );
+	return {
+		url: urlObj.toString(),
+		response,
+		parsed: JSON.parse( body )
+	};
+}
+
+async function runSemanticScholarLegacy(query, options) {
+	const q = String( query || '' ).trim();
+	if ( !q ) {
+		throw new Error( 'semantic-scholar requires <doi|arxiv|query>' );
+	}
+	const fields = options.fields || 'title,year,venue,citationCount,externalIds,authors,url';
+	const arxivId = normalizeArxivId( q );
+	const doiMatch = q.match( /\b10\.\d{4,9}\/[-._;()/:A-Z0-9]+\b/i );
+	let result;
+	if ( doiMatch ) {
+		const doi = normalizeDoi( doiMatch[ 0 ] );
+		result = await semanticScholarApiCall( `/paper/DOI:${ encodeURIComponent( doi ) }`, {
+			params: { fields },
+			s2ApiKey: options.s2ApiKey
+		} );
+	} else if ( arxivId ) {
+		result = await semanticScholarApiCall( `/paper/ARXIV:${ encodeURIComponent( arxivId ) }`, {
+			params: { fields },
+			s2ApiKey: options.s2ApiKey
+		} );
+	} else {
+		result = await semanticScholarApiCall( '/paper/search', {
+			params: {
+				query: q,
+				limit: Math.max( 1, Math.min( 100, Number.isFinite( options.limit ) ? options.limit : 5 ) ),
+				offset: Math.max( 0, Number.isFinite( options.offset ) ? options.offset : 0 ),
+				fields
+			},
+			s2ApiKey: options.s2ApiKey
+		} );
+	}
+	const output = Array.isArray( result.parsed && result.parsed.data ) ?
+		result.parsed.data.map( mapSemanticScholarPaper ) :
+		mapSemanticScholarPaper( result.parsed );
 	if ( options.json ) {
-		jsonOut( { ok: true, command: 'zotero', stage: 'semantic-scholar', query: q, result: output } );
+		jsonOut( { ok: true, command: 'semantic-scholar', stage: 'legacy', query: q, request_url: result.url, result: output } );
 		return output;
 	}
 	process.stdout.write( `${ JSON.stringify( output, null, 2 ) }\n` );
 	return output;
+}
+
+async function runSemanticScholarApi(pathname, options) {
+	const method = String( options.method || 'GET' ).toUpperCase();
+	const extraParams = parseJsonOptionArg( options.params, '--params' );
+	let body;
+	try {
+		body = parseMaybeJsonBody( options.body );
+	} catch ( error ) {
+		throw new Error( `Invalid --body JSON: ${ error.message }` );
+	}
+	const result = await semanticScholarApiCall( pathname, {
+		method,
+		params: extraParams,
+		body,
+		s2ApiKey: options.s2ApiKey
+	} );
+	if ( options.json ) {
+		jsonOut( {
+			ok: true,
+			command: 'semantic-scholar',
+			stage: 'api',
+			method,
+			request_url: result.url,
+			status_code: result.response.statusCode,
+			headers: result.response.headers || {},
+			result: result.parsed
+		} );
+		return result.parsed;
+	}
+	process.stdout.write( `${ JSON.stringify( result.parsed, null, 2 ) }\n` );
+	return result.parsed;
+}
+
+async function runSemanticScholarSubcommand(subAction, options) {
+	const action = String( subAction || '' ).trim().toLowerCase();
+	if ( !action || action === 'legacy' ) {
+		return runSemanticScholarLegacy( options.args.join( ' ' ).trim(), options );
+	}
+	if ( action === 'api' ) {
+		const pathname = String( options.args[ 0 ] || '' ).trim();
+		if ( !pathname ) throw new Error( 'semantic-scholar api requires <path>' );
+		return runSemanticScholarApi( pathname, options );
+	}
+	if ( action === 'paper' ) {
+		const paperId = String( options.args[ 0 ] || '' ).trim();
+		if ( !paperId ) throw new Error( 'semantic-scholar paper requires <paperId>' );
+		return runSemanticScholarApi( `/paper/${ paperId }`, {
+			...options,
+			params: JSON.stringify( { ...parseJsonOptionArg( options.params, '--params' ), fields: options.fields || undefined } )
+		} );
+	}
+	if ( action === 'paper-search' ) {
+		const query = options.args.join( ' ' ).trim();
+		if ( !query ) throw new Error( 'semantic-scholar paper-search requires <query>' );
+		const params = {
+			query,
+			limit: Math.max( 1, Math.min( 100, Number.isFinite( options.limit ) ? options.limit : 10 ) ),
+			offset: Math.max( 0, Number.isFinite( options.offset ) ? options.offset : 0 ),
+			fields: options.fields || undefined,
+			sort: options.sort || undefined,
+			year: options.year || undefined
+		};
+		return runSemanticScholarApi( '/paper/search', { ...options, params: JSON.stringify( params ) } );
+	}
+	if ( action === 'paper-search-bulk' ) {
+		const query = options.args.join( ' ' ).trim();
+		if ( !query ) throw new Error( 'semantic-scholar paper-search-bulk requires <query>' );
+		const params = {
+			query,
+			fields: options.fields || undefined,
+			sort: options.sort || undefined,
+			year: options.year || undefined,
+			token: options.token || undefined,
+			openAccessPdf: options.openAccessPdf || undefined,
+			minCitationCount: options.minCitationCount || undefined,
+			publicationTypes: options.publicationTypes || undefined,
+			venue: options.venue || undefined,
+			fieldsOfStudy: options.fieldsOfStudy || undefined
+		};
+		return runSemanticScholarApi( '/paper/search/bulk', { ...options, params: JSON.stringify( params ) } );
+	}
+	if ( action === 'paper-batch' ) {
+		const ids = parseIdsInput( options.args.join( ' ' ) );
+		if ( !ids.length ) throw new Error( 'semantic-scholar paper-batch requires IDs (csv or @file)' );
+		const params = { fields: options.fields || undefined };
+		return runSemanticScholarApi( '/paper/batch', {
+			...options,
+			method: 'POST',
+			params: JSON.stringify( params ),
+			body: JSON.stringify( { ids } )
+		} );
+	}
+	if ( action === 'author' ) {
+		const authorId = String( options.args[ 0 ] || '' ).trim();
+		if ( !authorId ) throw new Error( 'semantic-scholar author requires <authorId>' );
+		return runSemanticScholarApi( `/author/${ authorId }`, {
+			...options,
+			params: JSON.stringify( { fields: options.fields || undefined, ...parseJsonOptionArg( options.params, '--params' ) } )
+		} );
+	}
+	if ( action === 'author-papers' ) {
+		const authorId = String( options.args[ 0 ] || '' ).trim();
+		if ( !authorId ) throw new Error( 'semantic-scholar author-papers requires <authorId>' );
+		return runSemanticScholarApi( `/author/${ authorId }/papers`, {
+			...options,
+			params: JSON.stringify( {
+				fields: options.fields || undefined,
+				limit: Math.max( 1, Math.min( 100, Number.isFinite( options.limit ) ? options.limit : 20 ) ),
+				offset: Math.max( 0, Number.isFinite( options.offset ) ? options.offset : 0 ),
+				...parseJsonOptionArg( options.params, '--params' )
+			} )
+		} );
+	}
+	if ( action === 'author-batch' ) {
+		const ids = parseIdsInput( options.args.join( ' ' ) );
+		if ( !ids.length ) throw new Error( 'semantic-scholar author-batch requires IDs (csv or @file)' );
+		return runSemanticScholarApi( '/author/batch', {
+			...options,
+			method: 'POST',
+			params: JSON.stringify( { fields: options.fields || undefined, ...parseJsonOptionArg( options.params, '--params' ) } ),
+			body: JSON.stringify( { ids } )
+		} );
+	}
+	throw new Error( `Unsupported semantic-scholar action: ${ action }` );
 }
 
 async function runZoteroNoteCiteLinks(query, options) {
@@ -3123,16 +3374,6 @@ async function runZoteroCommand( subAction, options ) {
 	if ( action === 'safe-mode' ) {
 		const mode = String( options.args[ 0 ] || 'status' ).trim();
 		await runZoteroSafeMode( mode, options );
-		return;
-	}
-	if ( action === 'crossref' ) {
-		const query = options.args.join( ' ' ).trim();
-		await runZoteroCrossref( query, options );
-		return;
-	}
-	if ( action === 'semantic-scholar' ) {
-		const query = options.args.join( ' ' ).trim();
-		await runZoteroSemanticScholar( query, options );
 		return;
 	}
 	throw new Error( `Unsupported zotero action: ${ action }` );
@@ -4226,12 +4467,29 @@ if ( action === 'crossref' ) {
 
 if ( action === 'semantic-scholar' ) {
 	const parsed = parseOptions( process.argv.slice( 3 ) );
-	const query = parsed.args.join( ' ' ).trim();
-	if ( !query ) {
+	if ( !parsed.args.length ) {
 		usage();
 		process.exit( 1 );
 	}
-	runZoteroSemanticScholar( query, parsed ).catch( ( error ) => {
+	const subActions = new Set( [
+		'api',
+		'paper',
+		'paper-search',
+		'paper-search-bulk',
+		'paper-batch',
+		'author',
+		'author-papers',
+		'author-batch'
+	] );
+	const maybeSub = String( parsed.args[ 0 ] || '' ).trim().toLowerCase();
+	if ( subActions.has( maybeSub ) ) {
+		const subAction = parsed.args.shift();
+		runSemanticScholarSubcommand( subAction, parsed ).catch( ( error ) => {
+			handleCommandError( error, parsed, 'semantic-scholar' );
+		} );
+		return;
+	}
+	runSemanticScholarSubcommand( 'legacy', parsed ).catch( ( error ) => {
 		handleCommandError( error, parsed, 'semantic-scholar' );
 	} );
 	return;
