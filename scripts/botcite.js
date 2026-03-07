@@ -21,6 +21,7 @@ const rootDir = path.resolve( __dirname, '..' );
 const zoteroDir = process.env.ZOTERO_DIR || path.join( rootDir, 'vendor', 'zotero' );
 const cnTranslatorsDir = process.env.CN_TRANSLATORS_DIR || path.join( rootDir, 'vendor', 'translators_CN' );
 const vendoredStylesDir = path.join( rootDir, 'vendor', 'styles' );
+const vendoredOfficialStylesDir = path.join( rootDir, 'vendor', 'styles-official' );
 const localDir = path.join( rootDir, '.local' );
 const logDir = path.join( localDir, 'logs' );
 const stateDir = path.join( localDir, 'state' );
@@ -28,10 +29,9 @@ const mergedTranslatorsDir = process.env.LOCAL_TRANSLATORS_DIR ||
 	path.join( localDir, 'translators' );
 const stylesRootDir = process.env.LOCAL_STYLES_DIR ||
 	path.join( localDir, 'styles' );
-const stylesRepoDir = path.join( stylesRootDir, 'repo-zotero-chinese' );
 const cslDir = path.join( stylesRootDir, 'csl' );
 const localeDir = path.join( stylesRootDir, 'locales' );
-const defaultStylesRepo = vendoredStylesDir;
+const defaultStyleSources = [ vendoredOfficialStylesDir, vendoredStylesDir ];
 const defaultPdfFetchIntervalMs = parseInt( process.env.CITOID_LOCAL_FETCH_INTERVAL_MS || '800', 10 );
 const defaultRequestTimeoutMs = parseInt( process.env.CITOID_LOCAL_FETCH_TIMEOUT_MS || '15000', 10 );
 const defaultProbeBodyBytes = parseInt( process.env.CITOID_LOCAL_PROBE_BODY_BYTES || '1572864', 10 );
@@ -793,7 +793,7 @@ function parseOptions( args ) {
 		plain: false,
 		style: null,
 		locale: 'en-US',
-		repo: defaultStylesRepo,
+		repo: '',
 		base: defaultOpenUrlBase,
 		zoteroApiBase: defaultZoteroApiBase,
 		wmfCitoidBase: defaultWmfCitoidBase,
@@ -848,7 +848,7 @@ function parseOptions( args ) {
 			options.locale = args[ i + 1 ] || 'en-US';
 			i++;
 		} else if ( arg === '--repo' ) {
-			options.repo = args[ i + 1 ] || defaultStylesRepo;
+			options.repo = args[ i + 1 ] || '';
 			i++;
 		} else if ( arg === '--out' ) {
 			options.out = args[ i + 1 ] || '';
@@ -1155,18 +1155,27 @@ async function syncStyles( options ) {
 	ensureDirs();
 	fs.mkdirSync( cslDir, { recursive: true } );
 	fs.mkdirSync( localeDir, { recursive: true } );
-	const sourceStylesDir = path.isAbsolute( options.repo || '' ) ?
-		( options.repo || stylesRepoDir ) :
-		path.join( rootDir, options.repo || 'vendor/styles' );
-	if ( !fileExists( sourceStylesDir ) ) {
-		throw new Error( `styles source not found: ${ sourceStylesDir }` );
+	const sourceDirs = options.repo ?
+		[
+			path.isAbsolute( options.repo || '' ) ?
+				options.repo :
+				path.join( rootDir, options.repo || 'vendor/styles' )
+		] :
+		defaultStyleSources;
+	const missing = sourceDirs.filter( ( sourceDir ) => !fileExists( sourceDir ) );
+	if ( missing.length ) {
+		throw new Error( `styles source not found: ${ missing.join( ', ' ) }` );
 	}
 
-	const cslFiles = walkFiles( sourceStylesDir )
-		.filter( ( filePath ) => filePath.endsWith( '.csl' ) );
-	cslFiles.forEach( ( src ) => {
-		const dest = path.join( cslDir, path.basename( src ) );
-		fs.copyFileSync( src, dest );
+	let copiedCount = 0;
+	sourceDirs.forEach( ( sourceDir ) => {
+		const cslFiles = walkFiles( sourceDir )
+			.filter( ( filePath ) => filePath.endsWith( '.csl' ) );
+		cslFiles.forEach( ( src ) => {
+			const dest = path.join( cslDir, path.basename( src ) );
+			fs.copyFileSync( src, dest );
+			copiedCount++;
+		} );
 	} );
 
 	const localeTargets = [ 'en-US', 'zh-CN' ];
@@ -1179,7 +1188,7 @@ async function syncStyles( options ) {
 		runCommandOrThrow( 'curl', [ '-fsSL', localeUrl, '-o', dest ] );
 	}
 
-	process.stdout.write( `styles synced to ${ cslDir }\n` );
+	process.stdout.write( `styles synced to ${ cslDir } from ${ sourceDirs.join( ', ' ) } (copied ${ copiedCount } files)\n` );
 }
 
 function pickDefaultStylePath() {

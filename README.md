@@ -1,168 +1,131 @@
-# botcite (Citoid Local)
+# botcite
 
-`botcite` is a Bun-friendly CLI/service for resolving citation data from URL/DOI/arXiv and related identifiers.
+`botcite` is a citation operations toolkit for researchers, agents, and knowledge workflows.
+
+It combines:
+- fast citation generation (DOI / URL / arXiv / PDF)
+- Zotero library automation (items, notes, write-safe updates)
+- external scholarly APIs (Wikimedia Citoid, Crossref, Semantic Scholar)
+- MCP server mode for AI tool integration
+- dual vendored style sources: `zotero-chinese/styles` + official `citation-style-language/styles`
 
 [Citoid Documentation on mediawiki.org](https://www.mediawiki.org/wiki/Citoid)
 
-## Quickstart
-1. Run `bun install`
-2. Run `bun run start -c config.dev.yaml`
-3. Open [http://localhost:1970/?doc](http://localhost:1970/?doc#!/Citations/get_api) in your browser
+## Why botcite
+- One CLI for citation retrieval, metadata enrichment, and Zotero maintenance.
+- Safe-by-default write workflows (`dry-run`, `safe-mode`, delete confirmation).
+- Agent-ready through MCP (`tools/list`, `tools/call`).
+- Works locally and remotely with `bunx github:...`.
 
-## One-shot CLI (`botcite`)
-Run locally:
+## Quickstart
+1. `bun install`
+2. `bun run start -c config.dev.yaml`
+3. Open: [http://localhost:1970/?doc](http://localhost:1970/?doc#!/Citations/get_api)
+
+`botcite styles sync` now merges two vendored style repositories by default:
+- Chinese community styles: `vendor/styles`
+- Official CSL styles: `vendor/styles-official`
+
+## Fast Start (CLI)
+
+Local:
 
 ```bash
 bun run local --help
 bun run local cite bibtex 10.48550/arXiv.1706.03762
 ```
 
-Run directly from GitHub (no npm publish required):
+Remote (no publish step required):
 
 ```bash
 bunx github:trotsky1997/botcite#master --help
-bunx github:trotsky1997/botcite#master cite bibtex "10.1021/acsomega.2c05310"
-bunx github:trotsky1997/botcite#master cite bibtex "https://arxiv.org/pdf/2603.01919.pdf"
 bunx github:trotsky1997/botcite#master citoid formats
 bunx github:trotsky1997/botcite#master citoid bibtex "10.1021/acsomega.2c05310"
-bunx github:trotsky1997/botcite#master citation mediawiki "10.1021/acsomega.2c05310"
+bunx github:trotsky1997/botcite#master crossref "10.1021/acsomega.2c05310"
+bunx github:trotsky1997/botcite#master semantic-scholar "10.1021/acsomega.2c05310"
 ```
 
-## MCP mode
-Start MCP server over stdio:
+## MCP Mode
+
+Start MCP server:
 
 ```bash
 bunx github:trotsky1997/botcite#master mcp
 ```
 
-Implemented MCP methods:
+Implemented methods:
 - `initialize`
 - `ping`
 - `tools/list`
 - `tools/call`
 
-Available tools:
-- `cite` (`format`, `query`)
-- `cite_pdf` (`pdf_path`)
-- `fetch_pdf` (`identifier`, optional `out`, `base`)
-- `openurl_resolve` (`identifier`, optional `base`)
+Current MCP tools:
+- `cite`
+- `cite_pdf`
+- `fetch_pdf`
+- `openurl_resolve`
+- `citoid`
+- `crossref`
+- `semantic_scholar`
+- `semantic_scholar_api`
 
-## Zotero account library
+## Zotero Workflows
 
-Login once (credentials are saved under `.local/state/zotero-auth.json`):
+Login:
 
 ```bash
 bun run local zotero whoami --api-key <zotero_api_key>
 bun run local zotero login --api-key <zotero_api_key>
-bun run local zotero login --user-id <zotero_user_id> --api-key <zotero_api_key>
 ```
 
-Query your library:
+Core operations:
 
 ```bash
 bun run local zotero query "transformer" --limit 20
-```
-
-Dump library items (JSON):
-
-```bash
-bun run local zotero dump --limit 50
-```
-
-Cite a specific item by key or Zotero URL:
-
-```bash
 bun run local zotero cite AB12CD34
-bun run local zotero cite "https://www.zotero.org/users/<id>/items/AB12CD34"
-```
-
-Write operations (strict sanity checks enabled):
-
-```bash
 bun run local zotero add '{"itemType":"journalArticle","title":"Demo"}'
 bun run local zotero update AB12CD34 '{"title":"Updated title"}'
 bun run local zotero delete AB12CD34
-bun run local zotero delete -y AB12CD34
 ```
 
-Note operations:
+Notes:
 
 ```bash
 bun run local zotero note add AB12CD34 "<p>Key takeaway: ...</p>"
-bun run local zotero note list AB12CD34 --limit 20
-bun run local zotero note search "transformer"
 bun run local zotero note search "transformer" --parent AB12CD34
-bun run local zotero note update CD34EF56 "<p>Updated note</p>"
-bun run local zotero note delete CD34EF56
-bun run local zotero note delete -y CD34EF56
+bun run local zotero note cite-links "doi" --apply
 ```
 
-Write-safety notes:
-- API key must have write permissions.
-- `update` rejects reserved fields (`key`, `version`, `libraryID`, `itemType`, `links`, `meta`).
-- `delete` / `update` use item-version preconditions to avoid stale writes.
-- `delete` requires typing `yes` unless `-y/--yes` is passed.
-- `note add/update` accept HTML or plain text; plain text is auto-wrapped into safe HTML.
+Safety model:
+- `delete` requires interactive `yes` unless `-y/--yes`
+- `update/delete` use version preconditions
+- `safe-mode` and `--dry-run` available for write protection
 
-Advanced Zotero workflows:
+## Advanced Workflows
 
 ```bash
-# persistent dry-run guardrail
 bun run local zotero safe-mode on
-bun run local zotero safe-mode status
-
-# fill missing "Citation Key" in extra field
 bun run local zotero sync-cite --apply
-
-# detect possible duplicates
 bun run local zotero dedup --limit 300
-
-# enrich incomplete records (metadata backfill)
 bun run local zotero enrich --apply
-
-# export library to Markdown
 bun run local zotero export md --out ./library.md
-
-# note reference automation
-bun run local zotero note cite-links "doi" --apply
-
-# item templates
-bun run local zotero templates paper
-bun run local zotero templates paper --apply
-
-# watch query and append new cites to bib
 bun run local zotero watch "transformer" --out-bib ./watch.bib --interval 60
+```
 
-# external metadata APIs (top-level access)
-bun run local crossref 10.1021/acsomega.2c05310
-bun run local crossref "transformer attention is all you need" --limit 5
-bun run local semantic-scholar 10.1021/acsomega.2c05310
-bun run local semantic-scholar "transformer attention is all you need" --limit 5
+## Full Semantic Scholar Graph Access
 
-# full Semantic Scholar Graph API exposure
-bun run local semantic-scholar api /paper/DOI:10.1021%2Facsomega.2c05310 --params '{"fields":"title,year,authors"}'
+```bash
+bun run local semantic-scholar api /paper/search --params '{"query":"transformer","limit":3}'
 bun run local semantic-scholar paper-search "transformer attention" --limit 5 --fields "title,year,authors,url"
 bun run local semantic-scholar paper-batch @./paper_ids.txt --fields "title,year,authors"
 bun run local semantic-scholar author 1741101 --fields "name,paperCount,citationCount"
 ```
 
-Note: Semantic Scholar may return `429` without an API key. Use `--s2-api-key <key>` or set `S2_API_KEY`.
+Note: Semantic Scholar may return `429` without API key. Use `--s2-api-key <key>` or set `S2_API_KEY`.
 
-Logout:
-
-```bash
-bun run local zotero logout
-```
-
-## Packaging & publish
-Dry-run package contents:
+## Packaging
 
 ```bash
 bun run pack:dry-run
-```
-
-Publish to npm:
-
-```bash
 npm publish
 ```
