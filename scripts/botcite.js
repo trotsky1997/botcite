@@ -4,6 +4,7 @@
 /* eslint n/no-process-exit: "off" */
 
 const fs = require( 'fs' );
+const os = require( 'os' );
 const path = require( 'path' );
 const net = require( 'net' );
 const http = require( 'http' );
@@ -76,7 +77,7 @@ function usage() {
 	console.error( '  botcite semantic-scholar author-batch <id1,id2,...|@file>' );
 	console.error( '  botcite api [--headers] <path>' );
 	console.error( '  botcite cite [--headers] <format> <query>' );
-	console.error( '  botcite cite-pdf [--headers] <pdf-path>' );
+	console.error( '  botcite cite-pdf [--headers] [--debug-pdf] <pdf-path>' );
 	console.error( '  botcite fetch-pdf [--base <openurl-base>] [--out <file.pdf>] <doi|arxiv|url>' );
 	console.error( '  botcite openurl-resolve [--base <openurl-base>] <doi|arxiv|url>' );
 	console.error( '  botcite zotero <login|logout|whoami|query|dump|cite|add|delete|update|note|sync-cite|dedup|enrich|export|watch|templates|safe-mode> [...]' );
@@ -96,6 +97,7 @@ function usage() {
 	console.error( '  botcite semantic-scholar paper-search "transformer attention" --limit 5' );
 	console.error( '  botcite cite mediawiki https://arxiv.org/abs/1706.03762' );
 	console.error( '  botcite cite-pdf ./paper.pdf' );
+	console.error( '  botcite cite-pdf --json --debug-pdf ./paper.pdf' );
 	console.error( '  botcite fetch-pdf 10.1038/s41586-020-2649-2' );
 	console.error( '  botcite fetch-pdf 1706.03762 --out ./attention.pdf' );
 	console.error( "  botcite openurl-resolve --base 'https://example.edu/openurl' 10.1038/s41586-020-2649-2" );
@@ -567,7 +569,89 @@ function walkFiles( dirPath ) {
 }
 
 function normalizeDoi( raw ) {
-	return raw.replace( /[)\].,;:]+$/g, '' ).trim();
+	return String( raw || '' )
+		.replace( /^(?:https?:\/\/(?:dx\.)?doi\.org\/|doi:\s*)/i, '' )
+		.replace( /^[\s"'`([{]+/g, '' )
+		.replace( /[\s"'`)\].,;:}>]+$/g, '' )
+		.trim();
+}
+
+function lineLooksLikeReferenceEntry( line ) {
+	return /^\s*(?:\[\d+\]|\d+\.)\s+/.test( line ) ||
+		/\b(?:references?|bibliography|works cited)\b/i.test( line ) ||
+		/\b(?:vol\.?|no\.?|pp?\.|et al\.)\b/i.test( line ) && /\(\d{4}\)/.test( line );
+}
+
+function scoreDoiCandidate( candidate ) {
+	let score = 0;
+	const lowerLine = candidate.line.toLowerCase();
+	const prevLower = candidate.prevLine.toLowerCase();
+
+	if ( /(?:doi|doi\.org|identifier|citation_doi|dc\.identifier)/.test( lowerLine ) ) {
+		score += 60;
+	}
+	if ( /(?:doi|identifier)/.test( prevLower ) ) {
+		score += 20;
+	}
+	if ( candidate.lineIndex < 12 ) {
+		score += 35;
+	} else if ( candidate.lineIndex < 40 ) {
+		score += 20;
+	} else if ( candidate.lineIndex < 80 ) {
+		score += 10;
+	}
+	if ( lineLooksLikeReferenceEntry( candidate.line ) ) {
+		score -= 45;
+	}
+	if ( /\b(?:references?|bibliography|works cited)\b/.test( prevLower ) ) {
+		score -= 70;
+	}
+	score -= Math.min( candidate.lineIndex, 120 );
+	score -= candidate.position * 0.01;
+	return score;
+}
+
+function extractBestDoiCandidate( text ) {
+	const doiRegex = /(?:https?:\/\/(?:dx\.)?doi\.org\/|doi:\s*)?(10\.\d{4,9}\/[-._;()/:A-Z0-9<>\[\]]+)/ig;
+	const candidates = [];
+	const lines = String( text || '' ).split( /\r?\n/ );
+	let offset = 0;
+
+	lines.forEach( ( line, index ) => {
+		let match;
+		doiRegex.lastIndex = 0;
+		while ( ( match = doiRegex.exec( line ) ) ) {
+			const value = normalizeDoi( match[ 1 ] || match[ 0 ] );
+			if ( value ) {
+				candidates.push( {
+					value,
+					line,
+					prevLine: index > 0 ? lines[ index - 1 ] : '',
+					lineIndex: index,
+					position: offset + match.index
+				} );
+			}
+		}
+		offset += line.length + 1;
+	} );
+
+	if ( candidates.length === 0 ) {
+		return null;
+	}
+
+	const deduped = [];
+	const seen = new Set();
+	candidates.forEach( ( candidate ) => {
+		const key = candidate.value.toLowerCase();
+		if ( !seen.has( key ) ) {
+			seen.add( key );
+			candidate.score = scoreDoiCandidate( candidate );
+			deduped.push( candidate );
+		}
+	} );
+
+	deduped.sort( ( a, b ) => b.score - a.score || a.position - b.position );
+	return deduped[ 0 ].value;
 }
 
 function isLikelyTitleLine( line ) {
@@ -591,40 +675,69 @@ function uniqueKeepOrder( items ) {
 	return result;
 }
 
-function extractPdfCandidates( pdfPath ) {
-	if ( !fileExists( pdfPath ) ) {
-		throw new Error( `PDF not found: ${ pdfPath }` );
-	}
-	if ( !commandExists( 'pdftotext' ) ) {
-		throw new Error( 'pdftotext is required. Install poppler-utils first.' );
-	}
-
-	let text = '';
+function extractVisibleTextFromPdf( pdfPath ) {
 	try {
-		text = runCommandText( 'pdftotext', [ '-f', '1', '-l', '2', '-layout', pdfPath, '-' ] );
+		return runCommandText( 'pdftotext', [ '-f', '1', '-l', '2', '-layout', pdfPath, '-' ] );
 	} catch ( error ) {
-		text = runCommandText( 'pdftotext', [ '-f', '1', '-l', '2', pdfPath, '-' ] );
+		return runCommandText( 'pdftotext', [ '-f', '1', '-l', '2', pdfPath, '-' ] );
+	}
+}
+
+function shouldAttemptPdfOcr( text, metadataTitle ) {
+	const visibleText = String( text || '' )
+		.replace( /\s+/g, '' )
+		.trim();
+	if ( visibleText.length > 0 ) {
+		return false;
+	}
+	const titleText = String( metadataTitle || '' )
+		.replace( /\s+/g, '' )
+		.trim();
+	return titleText.length === 0;
+}
+
+function extractOcrTextFromPdf( pdfPath ) {
+	if ( !commandExists( 'pdftoppm' ) || !commandExists( 'tesseract' ) ) {
+		return '';
 	}
 
-	let metadataTitle = null;
-	if ( commandExists( 'pdfinfo' ) ) {
-		try {
-			const infoText = runCommandText( 'pdfinfo', [ pdfPath ] );
-			const titleMatch = infoText.match( /^\s*Title:\s+(.+)$/im );
-			if ( titleMatch && titleMatch[ 1 ] ) {
-				metadataTitle = titleMatch[ 1 ].trim();
+	const tmpDir = fs.mkdtempSync( path.join( os.tmpdir(), 'botcite-ocr-' ) );
+	const prefix = path.join( tmpDir, 'page' );
+	try {
+		runCommandOrThrow( 'pdftoppm', [ '-f', '1', '-l', '2', '-png', '-r', '200', pdfPath, prefix ] );
+		const images = fs.readdirSync( tmpDir )
+			.filter( ( name ) => /^page-\d+\.png$/i.test( name ) )
+			.sort();
+		const chunks = [];
+		images.forEach( ( name ) => {
+			try {
+				const text = runCommandText( 'tesseract', [
+					path.join( tmpDir, name ),
+					'stdout',
+					'--psm',
+					'6'
+				] );
+				if ( text.trim() ) {
+					chunks.push( text );
+				}
+			} catch ( error ) {
 			}
-		} catch ( error ) {
-		}
+		} );
+		return chunks.join( '\n' );
+	} finally {
+		fs.rmSync( tmpDir, { recursive: true, force: true } );
 	}
+}
 
-	const combined = `${ metadataTitle || '' }\n${ text }`;
-	const doiMatch = combined.match( /\b10\.\d{4,9}\/[-._;()/:A-Z0-9]+/i );
-	if ( doiMatch && doiMatch[ 0 ] ) {
+function detectPdfIdentifierCandidates( text, metadataTitle ) {
+	const combined = `${ metadataTitle || '' }\n${ text || '' }`;
+	const doi = extractBestDoiCandidate( combined );
+	if ( doi ) {
 		return {
 			type: 'doi',
-			value: normalizeDoi( doiMatch[ 0 ] ),
-			titles: []
+			value: doi,
+			titles: [],
+			extraction_source: 'text'
 		};
 	}
 
@@ -633,7 +746,8 @@ function extractPdfCandidates( pdfPath ) {
 		return {
 			type: 'arxiv',
 			value: `https://arxiv.org/abs/${ arxivMatch[ 1 ] }`,
-			titles: []
+			titles: [],
+			extraction_source: 'text'
 		};
 	}
 
@@ -651,8 +765,75 @@ function extractPdfCandidates( pdfPath ) {
 		return {
 			type: 'title',
 			value: titleCandidates[ 0 ],
-			titles: titleCandidates
+			titles: titleCandidates,
+			extraction_source: 'text'
 		};
+	}
+
+	return null;
+}
+
+function extractPdfCandidates( pdfPath, options = {} ) {
+	if ( !fileExists( pdfPath ) ) {
+		throw new Error( `PDF not found: ${ pdfPath }` );
+	}
+	if ( !commandExists( 'pdftotext' ) ) {
+		throw new Error( 'pdftotext is required. Install poppler-utils first.' );
+	}
+
+	let text = extractVisibleTextFromPdf( pdfPath );
+	const debug = {
+		pdf_path: pdfPath,
+		text_chars: String( text || '' ).replace( /\s+/g, '' ).length,
+		metadata_title_present: false,
+		ocr_attempted: false,
+		ocr_text_chars: 0
+	};
+
+	let metadataTitle = null;
+	if ( commandExists( 'pdfinfo' ) ) {
+		try {
+			const infoText = runCommandText( 'pdfinfo', [ pdfPath ] );
+				const titleMatch = infoText.match( /^\s*Title:\s+(.+)$/im );
+				if ( titleMatch && titleMatch[ 1 ] ) {
+					metadataTitle = titleMatch[ 1 ].trim();
+					debug.metadata_title_present = true;
+				}
+			} catch ( error ) {
+			}
+		}
+
+	let candidates = detectPdfIdentifierCandidates( text, metadataTitle );
+	if ( candidates ) {
+		if ( options.debugPdf ) {
+			candidates.debug = {
+				...debug,
+				result_type: candidates.type,
+				result_value: candidates.value
+			};
+		}
+		return candidates;
+	}
+
+	if ( shouldAttemptPdfOcr( text, metadataTitle ) ) {
+		debug.ocr_attempted = true;
+		const ocrText = extractOcrTextFromPdf( pdfPath );
+		if ( ocrText.trim() ) {
+			debug.ocr_text_chars = ocrText.replace( /\s+/g, '' ).length;
+			text = `${ text }\n${ ocrText }`.trim();
+			candidates = detectPdfIdentifierCandidates( text, metadataTitle );
+			if ( candidates ) {
+				candidates.extraction_source = 'ocr';
+				if ( options.debugPdf ) {
+					candidates.debug = {
+						...debug,
+						result_type: candidates.type,
+						result_value: candidates.value
+					};
+				}
+				return candidates;
+			}
+		}
 	}
 
 	throw new Error( 'Could not detect DOI/arXiv/title from PDF.' );
@@ -841,10 +1022,11 @@ function parseOptions( args ) {
 		json: false,
 		format: '',
 		concurrency: defaultBatchConcurrency,
-		cacheTtlSec: defaultCacheTtlSec,
-		profile: false,
-		silent: false,
-		args: []
+			cacheTtlSec: defaultCacheTtlSec,
+			profile: false,
+			debugPdf: false,
+			silent: false,
+			args: []
 	};
 
 	for ( let i = 0; i < args.length; i++ ) {
@@ -971,11 +1153,13 @@ function parseOptions( args ) {
 			const raw = args[ i + 1 ];
 			options.concurrency = parseInt( raw || String( defaultBatchConcurrency ), 10 );
 			i++;
-		} else if ( arg === '--profile' ) {
-			options.profile = true;
-		} else {
-			options.args.push( arg );
-		}
+			} else if ( arg === '--profile' ) {
+				options.profile = true;
+			} else if ( arg === '--debug-pdf' ) {
+				options.debugPdf = true;
+			} else {
+				options.args.push( arg );
+			}
 	}
 
 	return options;
@@ -1127,9 +1311,25 @@ async function queryCitationWithContext( ctx, format, query ) {
 
 async function runCitationFromPdf( pdfPath, options ) {
 	const startedAt = Date.now();
-	const candidates = extractPdfCandidates( path.resolve( pdfPath ) );
+	const candidates = extractPdfCandidates( path.resolve( pdfPath ), options );
 	if ( candidates.type === 'doi' || candidates.type === 'arxiv' ) {
-		return runCitation( 'bibtex', candidates.value, options );
+		const query = candidates.value;
+		const jsonOptions = options.json ? { ...options, json: false, silent: true } : options;
+		const response = await runCitation( 'bibtex', query, jsonOptions );
+		if ( options.json ) {
+			jsonOut( {
+				ok: true,
+				command: 'cite-pdf',
+				stage: 'done',
+				elapsed_ms: Date.now() - startedAt,
+				source: candidates.type,
+				extraction_source: candidates.extraction_source || 'text',
+				query,
+				pdf_debug: options.debugPdf ? candidates.debug || null : undefined,
+				response
+			} );
+		}
+		return response;
 	}
 
 	return withRunningServices( async ( ctx ) => {
@@ -1138,15 +1338,17 @@ async function runCitationFromPdf( pdfPath, options ) {
 			try {
 				const response = await queryCitationWithContext( ctx, 'bibtex', title );
 				if ( options.json ) {
-					jsonOut( {
-						ok: true,
-						command: 'cite-pdf',
-						stage: 'done',
-						elapsed_ms: Date.now() - startedAt,
-						source: 'title-fallback',
-						query: title,
-						response
-					} );
+						jsonOut( {
+							ok: true,
+							command: 'cite-pdf',
+							stage: 'done',
+							elapsed_ms: Date.now() - startedAt,
+							source: 'title-fallback',
+							extraction_source: candidates.extraction_source || 'text',
+							query: title,
+							pdf_debug: options.debugPdf ? candidates.debug || null : undefined,
+							response
+						} );
 				} else {
 					printResponse( response, options );
 				}
@@ -4550,232 +4752,246 @@ function serveMcp() {
 	process.stdin.resume();
 }
 
-const action = process.argv[ 2 ];
+function main() {
+	const action = process.argv[ 2 ];
 
-if ( action === 'mcp' ) {
-	serveMcp();
-	return;
-}
-
-if ( action === 'setup' ) {
-	try {
-		bootstrapLocalEnvironment();
-		process.stdout.write( 'local runtime ready\n' );
-		process.exit( 0 );
-	} catch ( error ) {
-		console.error( error.message );
-		process.exit( 1 );
-	}
-}
-
-if ( action === 'citoid' || action === 'citation' ) {
-	const parsed = parseOptions( process.argv.slice( 3 ) );
-	const formatOrSub = parsed.args[ 0 ];
-	if ( String( formatOrSub || '' ).trim().toLowerCase() === 'formats' ) {
-		runWmfCitoidFormats( parsed );
+	if ( action === 'mcp' ) {
+		serveMcp();
 		return;
 	}
-	const format = formatOrSub;
-	const query = parsed.args.slice( 1 ).join( ' ' ).trim();
-	if ( !format || !query ) {
-		usage();
-		process.exit( 1 );
-	}
-	runWmfCitoid( format, query, parsed ).catch( ( error ) => {
-		handleCommandError( error, parsed, action );
-	} );
-	return;
-}
 
-if ( action === 'crossref' ) {
-	const parsed = parseOptions( process.argv.slice( 3 ) );
-	const query = parsed.args.join( ' ' ).trim();
-	if ( !query ) {
-		usage();
-		process.exit( 1 );
+	if ( action === 'setup' ) {
+		try {
+			bootstrapLocalEnvironment();
+			process.stdout.write( 'local runtime ready\n' );
+			process.exit( 0 );
+		} catch ( error ) {
+			console.error( error.message );
+			process.exit( 1 );
+		}
 	}
-	runZoteroCrossref( query, parsed ).catch( ( error ) => {
-		handleCommandError( error, parsed, 'crossref' );
-	} );
-	return;
-}
 
-if ( action === 'semantic-scholar' ) {
-	const parsed = parseOptions( process.argv.slice( 3 ) );
-	if ( !parsed.args.length ) {
-		usage();
-		process.exit( 1 );
+	if ( action === 'citoid' || action === 'citation' ) {
+		const parsed = parseOptions( process.argv.slice( 3 ) );
+		const formatOrSub = parsed.args[ 0 ];
+		if ( String( formatOrSub || '' ).trim().toLowerCase() === 'formats' ) {
+			runWmfCitoidFormats( parsed );
+			return;
+		}
+		const format = formatOrSub;
+		const query = parsed.args.slice( 1 ).join( ' ' ).trim();
+		if ( !format || !query ) {
+			usage();
+			process.exit( 1 );
+		}
+		runWmfCitoid( format, query, parsed ).catch( ( error ) => {
+			handleCommandError( error, parsed, action );
+		} );
+		return;
 	}
-	const subActions = new Set( [
-		'api',
-		'paper',
-		'paper-search',
-		'paper-search-bulk',
-		'paper-batch',
-		'author',
-		'author-papers',
-		'author-batch'
-	] );
-	const maybeSub = String( parsed.args[ 0 ] || '' ).trim().toLowerCase();
-	if ( subActions.has( maybeSub ) ) {
-		const subAction = parsed.args.shift();
-		runSemanticScholarSubcommand( subAction, parsed ).catch( ( error ) => {
+
+	if ( action === 'crossref' ) {
+		const parsed = parseOptions( process.argv.slice( 3 ) );
+		const query = parsed.args.join( ' ' ).trim();
+		if ( !query ) {
+			usage();
+			process.exit( 1 );
+		}
+		runZoteroCrossref( query, parsed ).catch( ( error ) => {
+			handleCommandError( error, parsed, 'crossref' );
+		} );
+		return;
+	}
+
+	if ( action === 'semantic-scholar' ) {
+		const parsed = parseOptions( process.argv.slice( 3 ) );
+		if ( !parsed.args.length ) {
+			usage();
+			process.exit( 1 );
+		}
+		const subActions = new Set( [
+			'api',
+			'paper',
+			'paper-search',
+			'paper-search-bulk',
+			'paper-batch',
+			'author',
+			'author-papers',
+			'author-batch'
+		] );
+		const maybeSub = String( parsed.args[ 0 ] || '' ).trim().toLowerCase();
+		if ( subActions.has( maybeSub ) ) {
+			const subAction = parsed.args.shift();
+			runSemanticScholarSubcommand( subAction, parsed ).catch( ( error ) => {
+				handleCommandError( error, parsed, 'semantic-scholar' );
+			} );
+			return;
+		}
+		runSemanticScholarSubcommand( 'legacy', parsed ).catch( ( error ) => {
 			handleCommandError( error, parsed, 'semantic-scholar' );
 		} );
 		return;
 	}
-	runSemanticScholarSubcommand( 'legacy', parsed ).catch( ( error ) => {
-		handleCommandError( error, parsed, 'semantic-scholar' );
-	} );
-	return;
-}
 
-if ( action === 'styles' ) {
-	const parsed = parseOptions( process.argv.slice( 3 ) );
-	const subAction = parsed.args[ 0 ];
-	if ( subAction !== 'sync' ) {
-		usage();
-		process.exit( 1 );
-	}
-	syncStyles( parsed ).catch( ( error ) => {
-		handleCommandError( error, parsed, 'styles', 'sync' );
-	} );
-	return;
-}
-
-if ( action === 'api' ) {
-	const parsed = parseOptions( process.argv.slice( 3 ) );
-	const requestPath = parsed.args.join( ' ' ).trim();
-
-	if ( !requestPath ) {
-		usage();
-		process.exit( 1 );
+	if ( action === 'styles' ) {
+		const parsed = parseOptions( process.argv.slice( 3 ) );
+		const subAction = parsed.args[ 0 ];
+		if ( subAction !== 'sync' ) {
+			usage();
+			process.exit( 1 );
+		}
+		syncStyles( parsed ).catch( ( error ) => {
+			handleCommandError( error, parsed, 'styles', 'sync' );
+		} );
+		return;
 	}
 
-	runApiPath( requestPath, parsed ).catch( ( error ) => {
-		handleCommandError( error, parsed, 'api' );
-	} );
-	return;
-}
+	if ( action === 'api' ) {
+		const parsed = parseOptions( process.argv.slice( 3 ) );
+		const requestPath = parsed.args.join( ' ' ).trim();
 
-if ( action === 'cite' ) {
-	const parsed = parseOptions( process.argv.slice( 3 ) );
-	const format = parsed.args[ 0 ];
-	const query = parsed.args.slice( 1 ).join( ' ' ).trim();
+		if ( !requestPath ) {
+			usage();
+			process.exit( 1 );
+		}
 
-	if ( !format || !query ) {
-		usage();
-		process.exit( 1 );
+		runApiPath( requestPath, parsed ).catch( ( error ) => {
+			handleCommandError( error, parsed, 'api' );
+		} );
+		return;
 	}
 
-	runCitation( format, query, parsed ).catch( ( error ) => {
-		handleCommandError( error, parsed, 'cite' );
-	} );
-	return;
-}
+	if ( action === 'cite' ) {
+		const parsed = parseOptions( process.argv.slice( 3 ) );
+		const format = parsed.args[ 0 ];
+		const query = parsed.args.slice( 1 ).join( ' ' ).trim();
 
-if ( action === 'cite-pdf' ) {
-	const parsed = parseOptions( process.argv.slice( 3 ) );
-	const pdfPath = parsed.args.join( ' ' ).trim();
+		if ( !format || !query ) {
+			usage();
+			process.exit( 1 );
+		}
 
-	if ( !pdfPath ) {
-		usage();
-		process.exit( 1 );
+		runCitation( format, query, parsed ).catch( ( error ) => {
+			handleCommandError( error, parsed, 'cite' );
+		} );
+		return;
 	}
 
-	runCitationFromPdf( pdfPath, parsed ).catch( ( error ) => {
-		handleCommandError( error, parsed, 'cite-pdf' );
-	} );
-	return;
-}
+	if ( action === 'cite-pdf' ) {
+		const parsed = parseOptions( process.argv.slice( 3 ) );
+		const pdfPath = parsed.args.join( ' ' ).trim();
 
-if ( action === 'cite-style' ) {
-	const parsed = parseOptions( process.argv.slice( 3 ) );
-	const query = parsed.args.join( ' ' ).trim();
-	if ( !query ) {
-		usage();
-		process.exit( 1 );
+		if ( !pdfPath ) {
+			usage();
+			process.exit( 1 );
+		}
+
+		runCitationFromPdf( pdfPath, parsed ).catch( ( error ) => {
+			handleCommandError( error, parsed, 'cite-pdf' );
+		} );
+		return;
 	}
-	runCitationStyle( query, parsed ).catch( ( error ) => {
-		handleCommandError( error, parsed, 'cite-style' );
-	} );
-	return;
-}
 
-if ( action === 'fetch-pdf' ) {
-	const parsed = parseOptions( process.argv.slice( 3 ) );
-	const identifier = parsed.args.join( ' ' ).trim();
-	if ( !identifier ) {
-		usage();
-		process.exit( 1 );
+	if ( action === 'cite-style' ) {
+		const parsed = parseOptions( process.argv.slice( 3 ) );
+		const query = parsed.args.join( ' ' ).trim();
+		if ( !query ) {
+			usage();
+			process.exit( 1 );
+		}
+		runCitationStyle( query, parsed ).catch( ( error ) => {
+			handleCommandError( error, parsed, 'cite-style' );
+		} );
+		return;
 	}
-	runFetchPdf( identifier, parsed ).catch( ( error ) => {
-		handleCommandError( error, parsed, 'fetch-pdf' );
-	} );
-	return;
-}
 
-if ( action === 'openurl-resolve' ) {
-	const parsed = parseOptions( process.argv.slice( 3 ) );
-	const identifier = parsed.args.join( ' ' ).trim();
-	if ( !identifier ) {
-		usage();
-		process.exit( 1 );
+	if ( action === 'fetch-pdf' ) {
+		const parsed = parseOptions( process.argv.slice( 3 ) );
+		const identifier = parsed.args.join( ' ' ).trim();
+		if ( !identifier ) {
+			usage();
+			process.exit( 1 );
+		}
+		runFetchPdf( identifier, parsed ).catch( ( error ) => {
+			handleCommandError( error, parsed, 'fetch-pdf' );
+		} );
+		return;
 	}
-	runOpenUrlResolve( identifier, parsed ).catch( ( error ) => {
-		handleCommandError( error, parsed, 'openurl-resolve' );
-	} );
-	return;
-}
 
-if ( action === 'zotero' ) {
-	const rawArgs = process.argv.slice( 3 );
-	if ( rawArgs.length === 0 ||
-		rawArgs[ 0 ] === '--help' ||
-		rawArgs[ 0 ] === '-h' ||
-		rawArgs[ 0 ] === 'help' ) {
-		usageZotero();
-		process.exit( 0 );
+	if ( action === 'openurl-resolve' ) {
+		const parsed = parseOptions( process.argv.slice( 3 ) );
+		const identifier = parsed.args.join( ' ' ).trim();
+		if ( !identifier ) {
+			usage();
+			process.exit( 1 );
+		}
+		runOpenUrlResolve( identifier, parsed ).catch( ( error ) => {
+			handleCommandError( error, parsed, 'openurl-resolve' );
+		} );
+		return;
 	}
-	const subAction = String( rawArgs[ 0 ] || '' ).trim();
-	const parsed = parseOptions( rawArgs.slice( 1 ) );
-	if ( parsed.args.includes( '--help' ) || parsed.args.includes( '-h' ) ) {
-		usageZotero( subAction );
-		process.exit( 0 );
+
+	if ( action === 'zotero' ) {
+		const rawArgs = process.argv.slice( 3 );
+		if ( rawArgs.length === 0 ||
+			rawArgs[ 0 ] === '--help' ||
+			rawArgs[ 0 ] === '-h' ||
+			rawArgs[ 0 ] === 'help' ) {
+			usageZotero();
+			process.exit( 0 );
+		}
+		const subAction = String( rawArgs[ 0 ] || '' ).trim();
+		const parsed = parseOptions( rawArgs.slice( 1 ) );
+		if ( parsed.args.includes( '--help' ) || parsed.args.includes( '-h' ) ) {
+			usageZotero( subAction );
+			process.exit( 0 );
+		}
+		runZoteroCommand( subAction, parsed ).catch( ( error ) => {
+			handleCommandError( error, parsed, 'zotero', subAction );
+		} );
+		return;
 	}
-	runZoteroCommand( subAction, parsed ).catch( ( error ) => {
-		handleCommandError( error, parsed, 'zotero', subAction );
-	} );
-	return;
-}
 
-if ( action === 'batch' ) {
-	const parsed = parseOptions( process.argv.slice( 3 ) );
-	if ( !parsed.op || !parsed.in ) {
-		usage();
-		process.exit( 1 );
+	if ( action === 'batch' ) {
+		const parsed = parseOptions( process.argv.slice( 3 ) );
+		if ( !parsed.op || !parsed.in ) {
+			usage();
+			process.exit( 1 );
+		}
+		runBatch( parsed ).catch( ( error ) => {
+			handleCommandError( error, parsed, 'batch' );
+		} );
+		return;
 	}
-	runBatch( parsed ).catch( ( error ) => {
-		handleCommandError( error, parsed, 'batch' );
-	} );
-	return;
+
+	if ( action === 'info' ) {
+		const parsed = parseOptions( process.argv.slice( 3 ) );
+		runApiPath( '/_info', parsed ).catch( ( error ) => {
+			handleCommandError( error, parsed, 'info' );
+		} );
+		return;
+	}
+
+	if ( action === 'spec' ) {
+		const parsed = parseOptions( process.argv.slice( 3 ) );
+		runApiPath( '/?spec', parsed ).catch( ( error ) => {
+			handleCommandError( error, parsed, 'spec' );
+		} );
+		return;
+	}
+
+	usage();
+	process.exit( 1 );
 }
 
-if ( action === 'info' ) {
-	const parsed = parseOptions( process.argv.slice( 3 ) );
-	runApiPath( '/_info', parsed ).catch( ( error ) => {
-		handleCommandError( error, parsed, 'info' );
-	} );
-	return;
-}
+module.exports = {
+	detectPdfIdentifierCandidates,
+	extractBestDoiCandidate,
+	extractPdfCandidates,
+	normalizeDoi,
+	shouldAttemptPdfOcr
+};
 
-if ( action === 'spec' ) {
-	const parsed = parseOptions( process.argv.slice( 3 ) );
-	runApiPath( '/?spec', parsed ).catch( ( error ) => {
-		handleCommandError( error, parsed, 'spec' );
-	} );
-	return;
+if ( require.main === module ) {
+	main();
 }
-
-usage();
-process.exit( 1 );
